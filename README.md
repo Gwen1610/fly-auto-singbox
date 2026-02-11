@@ -6,6 +6,7 @@
 ## 功能
 
 - 一键初始化配置模板：`fly init`
+- 强制重建默认模板（覆盖并备份旧文件）：`fly init --force`
 - 按配置生成 sing-box 最终配置：`fly apply --dry-run`
 - 自动部署到 Linux（安装 sing-box、写入配置、拉起 systemd 服务）：`sudo fly apply`
 - 服务状态与日志：`fly status` / `fly logs`
@@ -35,6 +36,19 @@ chmod +x fly
 ```bash
 ./fly init
 ```
+
+当你升级到新版本默认规则、想重建模板时：
+
+```bash
+./fly init --force
+```
+
+`--force` 会覆盖：
+- `config/fly.env`
+- `config/groups.json`
+- `config/routes.json`
+
+并在 `state/` 下自动备份旧文件（`.bak.<timestamp>`）。
 
 会生成：
 

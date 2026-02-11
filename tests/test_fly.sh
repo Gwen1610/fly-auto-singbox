@@ -33,6 +33,13 @@ assert_file_exists "${WORK_DIR}/config/groups.json"
 assert_file_exists "${WORK_DIR}/config/routes.json"
 assert_contains '^SUBSCRIPTION_URL=' "${WORK_DIR}/config/fly.env"
 
+cat > "${WORK_DIR}/config/fly.env" <<'EOF'
+SUBSCRIPTION_URL="custom://should-not-keep"
+EOF
+
+./fly init --force
+assert_contains '^SUBSCRIPTION_URL=""' "${WORK_DIR}/config/fly.env"
+
 cat > "${WORK_DIR}/subscription.json" <<'JSON'
 {
   "outbounds": [

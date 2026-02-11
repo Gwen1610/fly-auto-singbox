@@ -39,7 +39,7 @@ usage() {
 fly - one-command sing-box bootstrap toolkit
 
 Usage:
-  ./fly init
+  ./fly init [--force]
   ./fly apply [--dry-run]
   ./fly status
   ./fly logs [-f] [-n lines]
@@ -47,7 +47,7 @@ Usage:
   ./fly help
 
 Command summary:
-  init       Create config templates under ./config
+  init       Create config templates under ./config (--force to overwrite)
   apply      Build config from subscription + groups + routes, then deploy
   status     Show current sing-box and service status
   logs       Show service logs (journalctl)
@@ -56,10 +56,33 @@ Command summary:
 EOF
 }
 
+backup_existing_file() {
+  local target_file="$1"
+  [[ -f "${target_file}" ]] || return 0
+  mkdir -p "${STATE_DIR}"
+  local base_name
+  base_name="$(basename "${target_file}")"
+  local backup_file="${STATE_DIR}/${base_name}.bak.$(date +%Y%m%d%H%M%S)"
+  cp "${target_file}" "${backup_file}"
+  log "backup ${target_file} -> ${backup_file}"
+}
+
 init_files() {
+  local force="false"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --force|-f) force="true" ;;
+      *) die "unknown flag for init: $1" ;;
+    esac
+    shift
+  done
+
   mkdir -p "${CONFIG_DIR}" "${BUILD_DIR}" "${STATE_DIR}"
 
-  if [[ ! -f "${ENV_FILE}" ]]; then
+  if [[ ! -f "${ENV_FILE}" ]] || is_true "${force}"; then
+    if [[ -f "${ENV_FILE}" ]] && is_true "${force}"; then
+      backup_existing_file "${ENV_FILE}"
+    fi
     cat > "${ENV_FILE}" <<'EOF'
 # Required: set one of SUBSCRIPTION_URL or SUBSCRIPTION_FILE.
 SUBSCRIPTION_URL=""
@@ -84,12 +107,19 @@ LOG_LEVEL="info"
 FINAL_OUTBOUND="proxy"
 CHECK_URL="https://www.gstatic.com/generate_204"
 EOF
-    log "created ${ENV_FILE}"
+    if is_true "${force}" && [[ -f "${ENV_FILE}" ]]; then
+      log "overwritten ${ENV_FILE}"
+    else
+      log "created ${ENV_FILE}"
+    fi
   else
     log "exists ${ENV_FILE}, skip"
   fi
 
-  if [[ ! -f "${GROUPS_FILE}" ]]; then
+  if [[ ! -f "${GROUPS_FILE}" ]] || is_true "${force}"; then
+    if [[ -f "${GROUPS_FILE}" ]] && is_true "${force}"; then
+      backup_existing_file "${GROUPS_FILE}"
+    fi
     cat > "${GROUPS_FILE}" <<'EOF'
 [
   {
@@ -174,12 +204,19 @@ EOF
   }
 ]
 EOF
-    log "created ${GROUPS_FILE}"
+    if is_true "${force}" && [[ -f "${GROUPS_FILE}" ]]; then
+      log "overwritten ${GROUPS_FILE}"
+    else
+      log "created ${GROUPS_FILE}"
+    fi
   else
     log "exists ${GROUPS_FILE}, skip"
   fi
 
-  if [[ ! -f "${ROUTES_FILE}" ]]; then
+  if [[ ! -f "${ROUTES_FILE}" ]] || is_true "${force}"; then
+    if [[ -f "${ROUTES_FILE}" ]] && is_true "${force}"; then
+      backup_existing_file "${ROUTES_FILE}"
+    fi
     cat > "${ROUTES_FILE}" <<'EOF'
 {
   "final": "proxy",
@@ -225,7 +262,11 @@ EOF
   ]
 }
 EOF
-    log "created ${ROUTES_FILE}"
+    if is_true "${force}" && [[ -f "${ROUTES_FILE}" ]]; then
+      log "overwritten ${ROUTES_FILE}"
+    else
+      log "created ${ROUTES_FILE}"
+    fi
   else
     log "exists ${ROUTES_FILE}, skip"
   fi

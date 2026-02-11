@@ -71,6 +71,18 @@
   - `README.md` (updated examples and AI rule description)
   - `tests/test_fly.sh` (expanded region matching assertions)
 
+### Phase 8 (Feature): `fly init --force`
+- **Status:** complete
+- Actions taken:
+  - Added `init --force` support to overwrite existing config templates.
+  - Added automatic backup of overwritten files into `state/*.bak.<timestamp>`.
+  - Updated README with force-init usage and backup behavior.
+  - Added/ran failing-then-passing test coverage for force overwrite behavior.
+- Files created/modified:
+  - `fly` (init force flow + backup helper)
+  - `README.md` (force-init docs)
+  - `tests/test_fly.sh` (force-init assertion)
+
 ### Phase 1: Requirements & Discovery
 - **Status:** complete
 - **Started:** 2026-02-11
