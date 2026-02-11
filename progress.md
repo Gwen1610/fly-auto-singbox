@@ -98,6 +98,8 @@
 | TDD GREEN check | `bash tests/test_fly.sh` (after implementation) | Pass init + dry-run generation | Passed | PASS |
 | CLI smoke | `./fly help` | Show usage and commands | Printed help successfully | PASS |
 | GitHub connectivity | `gh repo create ... --push` | Create remote and push | Failed: cannot resolve/connect `api.github.com` | FAIL (env) |
+| Final verification | `bash tests/test_fly.sh` | Pass end-to-end local dry-run test | Passed | PASS |
+| Final verification | `git status --short --branch` | Clean working tree | `## main` | PASS |
 
 ## Error Log
 | Timestamp | Error | Attempt | Resolution |
