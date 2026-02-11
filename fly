@@ -89,10 +89,13 @@ SUBSCRIPTION_URL=""
 SUBSCRIPTION_FILE=""
 
 # Supported values:
+# - auto (recommended): auto-detect source format.
 # - singbox: SUBSCRIPTION_URL directly returns sing-box JSON with "outbounds".
-# - clash/v2ray: require SUBCONVERTER_URL for format conversion.
-SUBSCRIPTION_FORMAT="singbox"
-SUBCONVERTER_URL=""
+# - clash/v2ray: convert via SUBCONVERTER_URL.
+SUBSCRIPTION_FORMAT="auto"
+SUBCONVERTER_URL="http://127.0.0.1:25500/sub"
+# Optional image override for auto-start local subconverter.
+SUBCONVERTER_IMAGE="docker.1ms.run/tindy2013/subconverter:latest"
 
 # Install and runtime
 SINGBOX_VERSION="1.12.20"
@@ -106,6 +109,8 @@ INBOUND_MIXED_PORT="7890"
 LOG_LEVEL="info"
 FINAL_OUTBOUND="proxy"
 CHECK_URL="https://www.gstatic.com/generate_204"
+# Compatibility toggle for sing-box 1.12 special outbounds validation.
+ENABLE_DEPRECATED_SPECIAL_OUTBOUNDS="true"
 EOF
     if is_true "${force}" && [[ -f "${ENV_FILE}" ]]; then
       log "overwritten ${ENV_FILE}"
@@ -280,8 +285,9 @@ load_env() {
   source "${ENV_FILE}"
   : "${SUBSCRIPTION_URL:=}"
   : "${SUBSCRIPTION_FILE:=}"
-  : "${SUBSCRIPTION_FORMAT:=singbox}"
-  : "${SUBCONVERTER_URL:=}"
+  : "${SUBSCRIPTION_FORMAT:=auto}"
+  : "${SUBCONVERTER_URL:=http://127.0.0.1:25500/sub}"
+  : "${SUBCONVERTER_IMAGE:=docker.1ms.run/tindy2013/subconverter:latest}"
   : "${SINGBOX_VERSION:=1.12.20}"
   : "${INSTALL_DIR:=/usr/local/bin}"
   : "${CONFIG_PATH:=/etc/sing-box/config.json}"
@@ -291,6 +297,7 @@ load_env() {
   : "${LOG_LEVEL:=info}"
   : "${FINAL_OUTBOUND:=proxy}"
   : "${CHECK_URL:=https://www.gstatic.com/generate_204}"
+  : "${ENABLE_DEPRECATED_SPECIAL_OUTBOUNDS:=true}"
 }
 
 abs_path() {
@@ -335,6 +342,177 @@ for item in outbounds:
 PY
 }
 
+detect_subscription_content_kind() {
+  local input_file="$1"
+  python3 - "${input_file}" <<'PY'
+import base64
+import json
+import re
+import sys
+from pathlib import Path
+
+text = Path(sys.argv[1]).read_text(encoding="utf-8", errors="ignore").strip()
+if not text:
+    print("empty")
+    raise SystemExit(0)
+
+try:
+    data = json.loads(text)
+    if isinstance(data, dict) and isinstance(data.get("outbounds"), list):
+        print("singbox_json")
+        raise SystemExit(0)
+except Exception:
+    pass
+
+lower_text = text.lower()
+if "<html" in lower_text[:300]:
+    print("html")
+    raise SystemExit(0)
+
+if "proxies:" in lower_text or "proxy-providers:" in lower_text:
+    print("clash")
+    raise SystemExit(0)
+
+uri_pat = re.compile(r"(ss|vmess|vless|trojan|hysteria2?|tuic)://", re.IGNORECASE)
+if uri_pat.search(text):
+    print("uri")
+    raise SystemExit(0)
+
+compact = "".join(text.split())
+if compact and re.fullmatch(r"[A-Za-z0-9+/=]+", compact):
+    try:
+        decoded = base64.b64decode(compact, validate=True).decode("utf-8", errors="ignore")
+        if uri_pat.search(decoded):
+            print("uri_b64")
+            raise SystemExit(0)
+        print("unknown_b64")
+        raise SystemExit(0)
+    except Exception:
+        pass
+
+print("unknown")
+PY
+}
+
+normalize_subconverter_url() {
+  if [[ -z "${SUBCONVERTER_URL}" ]]; then
+    SUBCONVERTER_URL="http://127.0.0.1:25500/sub"
+  fi
+  if [[ "${SUBCONVERTER_URL}" != */sub ]]; then
+    SUBCONVERTER_URL="${SUBCONVERTER_URL%/}/sub"
+  fi
+}
+
+subconverter_base_url() {
+  normalize_subconverter_url
+  printf '%s\n' "${SUBCONVERTER_URL%/sub}"
+}
+
+url_reachable() {
+  local url="$1"
+  curl -sS -o /dev/null --max-time 4 "${url}"
+}
+
+is_local_subconverter_target() {
+  local base_url
+  base_url="$(subconverter_base_url)"
+  [[ "${base_url}" =~ ^https?://(127\.0\.0\.1|localhost)(:[0-9]+)?$ ]]
+}
+
+ensure_docker_for_subconverter() {
+  if command -v docker >/dev/null 2>&1; then
+    return 0
+  fi
+
+  require_root
+  if command -v apt-get >/dev/null 2>&1; then
+    log "docker not found; installing docker.io via apt"
+    apt-get update -y
+    apt-get install -y docker.io
+  elif command -v dnf >/dev/null 2>&1; then
+    log "docker not found; installing docker via dnf"
+    dnf install -y docker
+  elif command -v yum >/dev/null 2>&1; then
+    log "docker not found; installing docker via yum"
+    yum install -y docker
+  else
+    die "docker is required to auto-start local subconverter, but no supported package manager found"
+  fi
+}
+
+start_local_subconverter_container() {
+  ensure_docker_for_subconverter
+
+  if command -v systemctl >/dev/null 2>&1; then
+    systemctl enable --now docker >/dev/null 2>&1 || true
+  fi
+
+  if docker ps --format '{{.Names}}' | grep -qx 'subconverter'; then
+    return 0
+  fi
+
+  if docker ps -a --format '{{.Names}}' | grep -qx 'subconverter'; then
+    docker start subconverter >/dev/null
+    return 0
+  fi
+
+  local images=(
+    "${SUBCONVERTER_IMAGE}"
+    "docker.1ms.run/tindy2013/subconverter:latest"
+    "tindy2013/subconverter:latest"
+  )
+  local image
+  for image in "${images[@]}"; do
+    [[ -n "${image}" ]] || continue
+    if docker run -d \
+      --name subconverter \
+      --restart unless-stopped \
+      -p 25500:25500 \
+      "${image}" >/dev/null 2>&1; then
+      log "started local subconverter container using image ${image}"
+      return 0
+    fi
+  done
+
+  die "failed to start local subconverter container; set SUBCONVERTER_URL to a reachable converter endpoint"
+}
+
+ensure_subconverter_ready() {
+  local base_url
+  base_url="$(subconverter_base_url)"
+  if url_reachable "${base_url}"; then
+    return 0
+  fi
+
+  if ! is_local_subconverter_target; then
+    die "SUBCONVERTER_URL is unreachable: ${SUBCONVERTER_URL}"
+  fi
+
+  log "local subconverter not reachable; attempting auto-start"
+  start_local_subconverter_container
+
+  local attempt
+  for attempt in $(seq 1 20); do
+    if url_reachable "${base_url}"; then
+      log "local subconverter is ready at ${SUBCONVERTER_URL}"
+      return 0
+    fi
+    sleep 1
+  done
+
+  die "local subconverter did not become ready at ${base_url}"
+}
+
+convert_subscription_via_subconverter() {
+  local source_url="$1"
+  local output_file="$2"
+  ensure_subconverter_ready
+  local encoded_url
+  encoded_url="$(url_encode "${source_url}")"
+  curl -fsSL "${SUBCONVERTER_URL}?target=singbox&url=${encoded_url}" -o "${output_file}"
+  validate_subscription_json "${output_file}"
+}
+
 fetch_subscription_json() {
   local output_file="$1"
   mkdir -p "$(dirname "${output_file}")"
@@ -344,6 +522,13 @@ fetch_subscription_json() {
     src="$(abs_path "${SUBSCRIPTION_FILE}")"
     [[ -f "${src}" ]] || die "SUBSCRIPTION_FILE does not exist: ${src}"
     cp "${src}" "${output_file}"
+    if [[ "${SUBSCRIPTION_FORMAT}" == "auto" ]]; then
+      local local_kind
+      local_kind="$(detect_subscription_content_kind "${output_file}")"
+      [[ "${local_kind}" == "singbox_json" ]] || die "SUBSCRIPTION_FILE with SUBSCRIPTION_FORMAT=auto must be sing-box JSON (detected: ${local_kind})"
+    elif [[ "${SUBSCRIPTION_FORMAT}" != "singbox" ]]; then
+      die "SUBSCRIPTION_FILE currently supports only singbox JSON input (set SUBSCRIPTION_FORMAT=auto or singbox)"
+    fi
     validate_subscription_json "${output_file}"
     return
   fi
@@ -351,18 +536,49 @@ fetch_subscription_json() {
   [[ -n "${SUBSCRIPTION_URL}" ]] || die "set SUBSCRIPTION_URL or SUBSCRIPTION_FILE in ${ENV_FILE}"
   need_cmd curl
 
+  if [[ "${SUBSCRIPTION_FORMAT}" == "auto" ]]; then
+    local raw_file
+    raw_file="$(mktemp)"
+    curl -fsSL "${SUBSCRIPTION_URL}" -o "${raw_file}"
+
+    local detected_kind
+    detected_kind="$(detect_subscription_content_kind "${raw_file}")"
+    case "${detected_kind}" in
+      singbox_json)
+        mv "${raw_file}" "${output_file}"
+        validate_subscription_json "${output_file}"
+        return
+        ;;
+      clash|uri|uri_b64|unknown_b64|unknown)
+        log "auto-detected subscription kind: ${detected_kind}; converting with subconverter"
+        rm -f "${raw_file}"
+        convert_subscription_via_subconverter "${SUBSCRIPTION_URL}" "${output_file}"
+        return
+        ;;
+      html)
+        rm -f "${raw_file}"
+        die "subscription URL returned HTML (likely auth/URL issue), cannot parse"
+        ;;
+      empty)
+        rm -f "${raw_file}"
+        die "subscription URL returned empty content"
+        ;;
+      *)
+        rm -f "${raw_file}"
+        die "unsupported auto-detected subscription content: ${detected_kind}"
+        ;;
+    esac
+  fi
+
   case "${SUBSCRIPTION_FORMAT}" in
     singbox)
       curl -fsSL "${SUBSCRIPTION_URL}" -o "${output_file}"
       ;;
     clash|v2ray)
-      [[ -n "${SUBCONVERTER_URL}" ]] || die "SUBCONVERTER_URL is required when SUBSCRIPTION_FORMAT=${SUBSCRIPTION_FORMAT}"
-      local encoded_url
-      encoded_url="$(url_encode "${SUBSCRIPTION_URL}")"
-      curl -fsSL "${SUBCONVERTER_URL}?target=singbox&url=${encoded_url}" -o "${output_file}"
+      convert_subscription_via_subconverter "${SUBSCRIPTION_URL}" "${output_file}"
       ;;
     *)
-      die "unsupported SUBSCRIPTION_FORMAT=${SUBSCRIPTION_FORMAT} (supported: singbox, clash, v2ray)"
+      die "unsupported SUBSCRIPTION_FORMAT=${SUBSCRIPTION_FORMAT} (supported: auto, singbox, clash, v2ray)"
       ;;
   esac
 
@@ -525,7 +741,11 @@ check_with_local_sing_box() {
   local config_file="$1"
   if command -v sing-box >/dev/null 2>&1; then
     log "running local validation: sing-box check -c ${config_file}"
-    sing-box check -c "${config_file}" >/dev/null
+    if is_true "${ENABLE_DEPRECATED_SPECIAL_OUTBOUNDS}"; then
+      ENABLE_DEPRECATED_SPECIAL_OUTBOUNDS=true sing-box check -c "${config_file}" >/dev/null
+    else
+      sing-box check -c "${config_file}" >/dev/null
+    fi
   else
     warn "sing-box not found locally; skipped local check (this is fine for first bootstrap)"
   fi
@@ -617,7 +837,7 @@ install_sing_box_if_needed() {
   arch="$(detect_arch)"
   local tmp_dir
   tmp_dir="$(mktemp -d)"
-  trap 'rm -rf "${tmp_dir}"' RETURN
+  trap 'rm -rf "${tmp_dir:-}"' RETURN
 
   local releases_file
   releases_file="${tmp_dir}/releases.json"
@@ -672,6 +892,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 ExecStart=${sing_box_bin} run -c ${CONFIG_PATH}
+Environment=ENABLE_DEPRECATED_SPECIAL_OUTBOUNDS=${ENABLE_DEPRECATED_SPECIAL_OUTBOUNDS}
 Restart=on-failure
 RestartSec=2
 LimitNOFILE=512000

@@ -2,6 +2,7 @@
 
 `fly` 是一个配置驱动的一键脚本工具。  
 你只需要填写订阅链接 + 节点分组 + 分流策略，然后执行 `fly apply`。
+默认支持“通用订阅链接”自动识别；需要转换时会优先使用本机 `subconverter`。
 
 ## 功能
 
@@ -70,8 +71,9 @@ chmod +x fly
 ```bash
 SUBSCRIPTION_URL="https://example.com/sub"
 SUBSCRIPTION_FILE=""
-SUBSCRIPTION_FORMAT="singbox"
-SUBCONVERTER_URL=""
+SUBSCRIPTION_FORMAT="auto"
+SUBCONVERTER_URL="http://127.0.0.1:25500/sub"
+SUBCONVERTER_IMAGE="docker.1ms.run/tindy2013/subconverter:latest"
 SINGBOX_VERSION="1.12.20"
 INSTALL_DIR="/usr/local/bin"
 CONFIG_PATH="/etc/sing-box/config.json"
@@ -81,14 +83,16 @@ INBOUND_MIXED_PORT="7890"
 LOG_LEVEL="info"
 FINAL_OUTBOUND="proxy"
 CHECK_URL="https://www.gstatic.com/generate_204"
+ENABLE_DEPRECATED_SPECIAL_OUTBOUNDS="true"
 ```
 
 说明：
 
-- 如果 `SUBSCRIPTION_FORMAT=singbox`，`SUBSCRIPTION_URL` 需要直接返回包含 `outbounds` 的 sing-box JSON。
-- 如果你的订阅不是 sing-box 格式，可设置：
-  - `SUBSCRIPTION_FORMAT=clash` 或 `v2ray`
-  - `SUBCONVERTER_URL=<你的 subconverter 接口地址>`
+- 推荐 `SUBSCRIPTION_FORMAT=auto`：会自动识别 `sing-box JSON` / `Clash` / `通用(base64 URI)` 订阅。
+- 当检测到需要转换时，会使用 `SUBCONVERTER_URL`。如果它指向本机（默认 `127.0.0.1:25500/sub`）且不可用，`fly` 会尝试自动拉起本地 `subconverter` 容器。
+- 你也可以手动指定：
+  - `SUBSCRIPTION_FORMAT=singbox`（订阅直接返回 sing-box JSON）
+  - `SUBSCRIPTION_FORMAT=clash` 或 `v2ray`（强制走转换）
 
 ### 3.2 `config/groups.json`（节点分组）
 

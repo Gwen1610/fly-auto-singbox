@@ -32,6 +32,9 @@ assert_file_exists "${WORK_DIR}/config/fly.env"
 assert_file_exists "${WORK_DIR}/config/groups.json"
 assert_file_exists "${WORK_DIR}/config/routes.json"
 assert_contains '^SUBSCRIPTION_URL=' "${WORK_DIR}/config/fly.env"
+assert_contains '^SUBSCRIPTION_FORMAT="auto"$' "${WORK_DIR}/config/fly.env"
+assert_contains '^SUBCONVERTER_URL="http://127.0.0.1:25500/sub"$' "${WORK_DIR}/config/fly.env"
+assert_contains '^ENABLE_DEPRECATED_SPECIAL_OUTBOUNDS="true"$' "${WORK_DIR}/config/fly.env"
 
 cat > "${WORK_DIR}/config/fly.env" <<'EOF'
 SUBSCRIPTION_URL="custom://should-not-keep"
@@ -98,7 +101,7 @@ JSON
 cat > "${WORK_DIR}/config/fly.env" <<EOF
 SUBSCRIPTION_URL=""
 SUBSCRIPTION_FILE="${WORK_DIR}/subscription.json"
-SUBSCRIPTION_FORMAT="singbox"
+SUBSCRIPTION_FORMAT="auto"
 SUBCONVERTER_URL=""
 SINGBOX_VERSION="1.12.20"
 INSTALL_DIR="/usr/local/bin"
@@ -108,6 +111,7 @@ INBOUND_MIXED_PORT="7890"
 LOG_LEVEL="info"
 FINAL_OUTBOUND="proxy"
 CHECK_URL="https://www.gstatic.com/generate_204"
+ENABLE_DEPRECATED_SPECIAL_OUTBOUNDS="true"
 EOF
 
 ./fly apply --dry-run

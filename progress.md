@@ -83,6 +83,20 @@
   - `README.md` (force-init docs)
   - `tests/test_fly.sh` (force-init assertion)
 
+### Phase 9 (Feature): Auto Generic Subscription Bootstrap
+- **Status:** complete
+- Actions taken:
+  - Changed default env template to `SUBSCRIPTION_FORMAT=auto` and local `SUBCONVERTER_URL`.
+  - Added auto-detection for subscription content kinds (sing-box JSON / clash / URI / base64 URI / html).
+  - Added automatic local subconverter startup path (local URL health check -> docker start/run fallback).
+  - Added compatibility wiring for deprecated special outbounds during check/service runtime.
+  - Fixed temp cleanup trap to avoid `tmp_dir` unbound variable error.
+  - Updated README and test expectations to match new default behavior.
+- Files created/modified:
+  - `fly` (auto detection + converter bootstrap + compatibility)
+  - `README.md` (auto subscription workflow docs)
+  - `tests/test_fly.sh` (new default env expectations)
+
 ### Phase 1: Requirements & Discovery
 - **Status:** complete
 - **Started:** 2026-02-11
