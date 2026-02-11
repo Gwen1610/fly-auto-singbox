@@ -36,7 +36,7 @@ is_true() {
 
 usage() {
   cat <<'EOF'
-fly - one-command sing-box bootstrap toolkit
+Fly - auto sing-box bootstrap toolkit
 
 Usage:
   ./fly init [--force]
@@ -145,8 +145,10 @@ SUBSCRIPTION_FORMAT="auto"
 SUBCONVERTER_URL="http://127.0.0.1:25500/sub"
 # Optional image override for auto-start local subconverter.
 SUBCONVERTER_IMAGE="docker.1ms.run/tindy2013/subconverter:latest"
-# If docker is not installed and you want fly to auto-install it for local subconverter, set to true.
-SUBCONVERTER_AUTO_INSTALL_DOCKER="false"
+# Auto-start local subconverter when SUBCONVERTER_URL points to 127.0.0.1/localhost.
+SUBCONVERTER_AUTO_START_LOCAL="true"
+# If docker is not installed, allow fly to auto-install it for local subconverter.
+SUBCONVERTER_AUTO_INSTALL_DOCKER="true"
 
 # Install and runtime
 SINGBOX_VERSION="1.12.20"
@@ -335,7 +337,8 @@ load_env() {
   : "${SUBSCRIPTION_FORMAT:=auto}"
   : "${SUBCONVERTER_URL:=http://127.0.0.1:25500/sub}"
   : "${SUBCONVERTER_IMAGE:=docker.1ms.run/tindy2013/subconverter:latest}"
-  : "${SUBCONVERTER_AUTO_INSTALL_DOCKER:=false}"
+  : "${SUBCONVERTER_AUTO_START_LOCAL:=true}"
+  : "${SUBCONVERTER_AUTO_INSTALL_DOCKER:=true}"
   : "${SINGBOX_VERSION:=1.12.20}"
   : "${INSTALL_DIR:=/usr/local/bin}"
   : "${CONFIG_PATH:=/etc/sing-box/config.json}"
@@ -543,6 +546,10 @@ ensure_subconverter_ready() {
 
   if ! is_true "${allow_autostart}"; then
     die "local subconverter is unreachable at ${base_url}; dry-run will not auto-start it. start it manually or set SUBCONVERTER_URL to a reachable converter endpoint"
+  fi
+
+  if ! is_true "${SUBCONVERTER_AUTO_START_LOCAL:-true}"; then
+    die "local subconverter is unreachable at ${base_url}; auto-start disabled (SUBCONVERTER_AUTO_START_LOCAL=false). start it manually or set SUBCONVERTER_URL to a reachable converter endpoint"
   fi
 
   log "local subconverter not reachable; attempting auto-start"

@@ -1,4 +1,6 @@
-# Auto sing-box with `fly`
+# Fly
+
+auto sing-box
 
 在一台干净的 Linux 服务器上把 sing-box 跑起来，并提供本机代理端口（默认 `127.0.0.1:7890`）。
 配置方式是三件事：订阅 + 节点分组 + 分流规则，其他交给 `./fly`。
@@ -16,7 +18,7 @@
 - 可选：`docker`
   - 只有当你的订阅不是 sing-box JSON 时才需要转换
   - `SUBCONVERTER_URL` 指向本机且不可用时，`fly` 会尝试自动拉起本地 `subconverter` 容器
-  - 默认不会自动安装 docker；需要的话在 `config/fly.env` 里设置 `SUBCONVERTER_AUTO_INSTALL_DOCKER=true`
+  - 默认允许自动安装 docker（为了把本机 converter 跑起来）；不想要的话看下面“如何关闭”部分
 
 > `config/` `build/` `state/` 已写进 `.gitignore`，不会被提交。订阅链接仍然建议当成敏感信息保管。
 
@@ -102,10 +104,13 @@ curl -I --max-time 15 --proxy socks5h://127.0.0.1:7890 https://www.gstatic.com/g
 - `SUBCONVERTER_URL`
   - 默认 `http://127.0.0.1:25500/sub`
   - 当订阅需要转换时会使用它
+- `SUBCONVERTER_AUTO_START_LOCAL`
+  - 默认 `true`
+  - 当 `SUBCONVERTER_URL` 指向 `127.0.0.1/localhost` 且 converter 不可用时，是否允许 `fly` 自动拉起本机 `subconverter` 容器
 - `SUBCONVERTER_AUTO_INSTALL_DOCKER`
-  - 默认 `false`
+  - 默认 `true`
   - 只在 `SUBCONVERTER_URL` 指向本机、且需要转换时才会用到
-  - 设为 `true` 表示允许 `fly` 在本机缺 docker 时自动安装 docker（有副作用，慎用）
+  - 设为 `false` 表示禁止 `fly` 自动安装 docker（建议你自己装，或用远端 converter）
 - `SINGBOX_VERSION`
   - 默认 `1.12.20`
   - 也支持 `latest`（依赖 GitHub Releases API）
@@ -199,3 +204,12 @@ sudo ./fly proxy-hooks-install
 ```bash
 bash tests/test_fly.sh
 ```
+
+## 如何关闭“自动装 docker/自动起本机 converter”
+
+编辑 `config/fly.env`：
+
+- 禁止自动安装 docker：`SUBCONVERTER_AUTO_INSTALL_DOCKER="false"`
+- 禁止自动拉起本机 converter：`SUBCONVERTER_AUTO_START_LOCAL="false"`
+
+如果你两项都关了，又用了“通用订阅链接”，那就需要你自己把 converter 跑起来，或者把 `SUBCONVERTER_URL` 改成一个可用的远端 converter。
