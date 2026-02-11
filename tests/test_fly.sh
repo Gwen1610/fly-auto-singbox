@@ -34,6 +34,7 @@ assert_file_exists "${WORK_DIR}/config/routes.json"
 assert_contains '^SUBSCRIPTION_URL=' "${WORK_DIR}/config/fly.env"
 assert_contains '^SUBSCRIPTION_FORMAT="auto"$' "${WORK_DIR}/config/fly.env"
 assert_contains '^SUBCONVERTER_URL="http://127.0.0.1:25500/sub"$' "${WORK_DIR}/config/fly.env"
+assert_contains '^SUBCONVERTER_AUTO_INSTALL_DOCKER="false"$' "${WORK_DIR}/config/fly.env"
 assert_contains '^ENABLE_DEPRECATED_SPECIAL_OUTBOUNDS="true"$' "${WORK_DIR}/config/fly.env"
 
 cat > "${WORK_DIR}/config/fly.env" <<'EOF'
@@ -172,6 +173,82 @@ fi
 fly_off >/dev/null
 if [[ -n "${ALL_PROXY:-}" ]]; then
   echo "ASSERT FAIL: fly_off did not unset ALL_PROXY" >&2
+  exit 1
+fi
+
+# Dry-run must NOT auto-start local subconverter (docker) when converter is unreachable.
+# We put a fake `docker` in PATH that writes a marker file. If fly calls docker, this test fails.
+echo "ss://dummy" > "${WORK_DIR}/sub.uri"
+cat > "${WORK_DIR}/config/fly.env" <<EOF
+SUBSCRIPTION_URL="file://${WORK_DIR}/sub.uri"
+SUBSCRIPTION_FILE=""
+SUBSCRIPTION_FORMAT="auto"
+SUBCONVERTER_URL="http://127.0.0.1:25500/sub"
+SUBCONVERTER_AUTO_INSTALL_DOCKER="false"
+SINGBOX_VERSION="1.12.20"
+INSTALL_DIR="/usr/local/bin"
+CONFIG_PATH="/etc/sing-box/config.json"
+SERVICE_NAME="sing-box"
+INBOUND_MIXED_PORT="7890"
+LOG_LEVEL="info"
+FINAL_OUTBOUND="proxy"
+CHECK_URL="https://www.gstatic.com/generate_204"
+ENABLE_DEPRECATED_SPECIAL_OUTBOUNDS="true"
+EOF
+
+mkdir -p "${WORK_DIR}/bin"
+cat > "${WORK_DIR}/bin/docker" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+echo "called" > docker.called
+exit 2
+SH
+chmod +x "${WORK_DIR}/bin/docker"
+
+set +e
+PATH="${WORK_DIR}/bin:${PATH}" ./fly apply --dry-run >/dev/null 2>&1
+apply_rc=$?
+set -e
+if [[ "${apply_rc}" -eq 0 ]]; then
+  echo "ASSERT FAIL: expected dry-run to fail when local subconverter is unreachable" >&2
+  exit 1
+fi
+if [[ -f "${WORK_DIR}/docker.called" ]]; then
+  echo "ASSERT FAIL: dry-run unexpectedly invoked docker (should not auto-start subconverter)" >&2
+  exit 1
+fi
+
+# Non-dry-run apply should NOT auto-install docker by default.
+# Run fly with a PATH that contains only the minimal commands it needs (and no `docker`).
+nodocker_bin="${WORK_DIR}/nodockerbin"
+mkdir -p "${nodocker_bin}"
+
+real_bash="$(command -v bash)"
+real_curl="$(command -v curl)"
+real_python3="$(command -v python3)"
+real_mkdir="$(command -v mkdir)"
+real_dirname="$(command -v dirname)"
+real_mktemp="$(command -v mktemp)"
+real_rm="$(command -v rm)"
+
+ln -sf "${real_curl}" "${nodocker_bin}/curl"
+ln -sf "${real_python3}" "${nodocker_bin}/python3"
+ln -sf "${real_mkdir}" "${nodocker_bin}/mkdir"
+ln -sf "${real_dirname}" "${nodocker_bin}/dirname"
+ln -sf "${real_mktemp}" "${nodocker_bin}/mktemp"
+ln -sf "${real_rm}" "${nodocker_bin}/rm"
+
+fly_out="${WORK_DIR}/fly-apply.out"
+set +e
+PATH="${nodocker_bin}" "${real_bash}" ./fly apply >"${fly_out}" 2>&1
+apply_rc=$?
+set -e
+if [[ "${apply_rc}" -eq 0 ]]; then
+  echo "ASSERT FAIL: expected apply to fail when docker is missing and auto-install is disabled" >&2
+  exit 1
+fi
+if ! grep -q "SUBCONVERTER_AUTO_INSTALL_DOCKER" "${fly_out}"; then
+  echo "ASSERT FAIL: expected error message to mention SUBCONVERTER_AUTO_INSTALL_DOCKER" >&2
   exit 1
 fi
 

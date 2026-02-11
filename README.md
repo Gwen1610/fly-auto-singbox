@@ -1,324 +1,201 @@
 # Auto sing-box with `fly`
 
-`fly` 是一个配置驱动的一键脚本工具。  
-你只需要填写订阅链接 + 节点分组 + 分流策略，然后执行 `fly apply`。
-默认支持“通用订阅链接”自动识别；需要转换时会优先使用本机 `subconverter`。
+在一台干净的 Linux 服务器上把 sing-box 跑起来，并提供本机代理端口（默认 `127.0.0.1:7890`）。
+配置方式是三件事：订阅 + 节点分组 + 分流规则，其他交给 `./fly`。
 
-## 功能
+## 适用场景
 
-- 一键初始化配置模板：`fly init`
-- 强制重建默认模板（覆盖并备份旧文件）：`fly init --force`
-- 按配置生成 sing-box 最终配置：`fly apply --dry-run`
-- 自动部署到 Linux（安装 sing-box、写入配置、拉起 systemd 服务）：`sudo fly apply`
-- 安装全局代理开关命令：`fly proxy-hooks-install`（提供 `fly_on` / `fly_status` / `fly_off`）
-- 服务状态与日志：`fly status` / `fly logs`
-- 失败回滚：`sudo fly rollback`
+- 你只有“通用订阅链接”（base64/URI/Clash/v2ray 等），不想手工转格式
+- 你想按地区分组（香港/美国/日本/韩国/新加坡），再按域名分流（默认：AI 走美国，Google 走香港）
+- 你希望在服务器里用 `fly_on` / `fly_off` 快速给终端命令挂代理
 
-## 1. 在 Linux 服务器下载项目
+## 环境要求
 
-### 方式 A：git clone
+- Linux + systemd（脚本会创建 `/etc/systemd/system/<SERVICE_NAME>.service` 并管理它）
+- 基础命令：`bash` `curl` `python3` `tar` `install`
+- 可选：`docker`
+  - 只有当你的订阅不是 sing-box JSON 时才需要转换
+  - `SUBCONVERTER_URL` 指向本机且不可用时，`fly` 会尝试自动拉起本地 `subconverter` 容器
+  - 默认不会自动安装 docker；需要的话在 `config/fly.env` 里设置 `SUBCONVERTER_AUTO_INSTALL_DOCKER=true`
+
+> `config/` `build/` `state/` 已写进 `.gitignore`，不会被提交。订阅链接仍然建议当成敏感信息保管。
+
+## 快速开始
+
+### 1) 下载
 
 ```bash
-git clone <YOUR_GITHUB_REPO_URL> auto-sing-box
+git clone https://github.com/Gwen1610/Auto_sing-box auto-sing-box
 cd auto-sing-box
 chmod +x fly
 ```
 
-### 方式 B：下载压缩包
-
-```bash
-curl -L <YOUR_GITHUB_REPO_ARCHIVE_URL> -o auto-sing-box.tar.gz
-tar -xzf auto-sing-box.tar.gz
-cd auto-sing-box*
-chmod +x fly
-```
-
-## 2. 初始化配置
+### 2) 初始化配置模板
 
 ```bash
 ./fly init
 ```
 
-当你升级到新版本默认规则、想重建模板时：
+生成：
+
+- `config/fly.env`
+- `config/groups.json`
+- `config/routes.json`
+
+需要用“最新版默认模板”覆盖（会备份旧文件到 `state/*.bak.<timestamp>`）：
 
 ```bash
 ./fly init --force
 ```
 
-`--force` 会覆盖：
-- `config/fly.env`
-- `config/groups.json`
-- `config/routes.json`
+### 3) 填订阅链接
 
-并在 `state/` 下自动备份旧文件（`.bak.<timestamp>`）。
+编辑 `config/fly.env`，至少填一个：
 
-会生成：
+- `SUBSCRIPTION_URL="..."`（常用）
+- `SUBSCRIPTION_FILE="/path/to/subscription.json"`（本地已有 sing-box JSON 时）
 
-- `config/fly.env`
-- `config/groups.json`
-- `config/routes.json`
-
-## 3. 填写你的配置
-
-### 3.1 `config/fly.env`
-
-至少填一个：
-
-- `SUBSCRIPTION_URL`：机场订阅地址
-- `SUBSCRIPTION_FILE`：本地 sing-box 订阅 JSON 文件路径
-
-示例：
+最常用的配置通常就这几行：
 
 ```bash
 SUBSCRIPTION_URL="https://example.com/sub"
-SUBSCRIPTION_FILE=""
 SUBSCRIPTION_FORMAT="auto"
 SUBCONVERTER_URL="http://127.0.0.1:25500/sub"
-SUBCONVERTER_IMAGE="docker.1ms.run/tindy2013/subconverter:latest"
-SINGBOX_VERSION="1.12.20"
-INSTALL_DIR="/usr/local/bin"
-CONFIG_PATH="/etc/sing-box/config.json"
-SERVICE_NAME="sing-box"
-INBOUND_LISTEN="127.0.0.1"
-INBOUND_MIXED_PORT="7890"
-LOG_LEVEL="info"
-FINAL_OUTBOUND="proxy"
-CHECK_URL="https://www.gstatic.com/generate_204"
-ENABLE_DEPRECATED_SPECIAL_OUTBOUNDS="true"
 ```
 
-说明：
-
-- 推荐 `SUBSCRIPTION_FORMAT=auto`：会自动识别 `sing-box JSON` / `Clash` / `通用(base64 URI)` 订阅。
-- 当检测到需要转换时，会使用 `SUBCONVERTER_URL`。如果它指向本机（默认 `127.0.0.1:25500/sub`）且不可用，`fly` 会尝试自动拉起本地 `subconverter` 容器。
-- 你也可以手动指定：
-  - `SUBSCRIPTION_FORMAT=singbox`（订阅直接返回 sing-box JSON）
-  - `SUBSCRIPTION_FORMAT=clash` 或 `v2ray`（强制走转换）
-
-### 3.2 `config/groups.json`（节点分组）
-
-示例：
-
-```json
-[
-  {
-    "tag": "all-proxies",
-    "type": "selector",
-    "include_regex": ".*"
-  },
-  {
-    "tag": "hk-auto",
-    "type": "urltest",
-    "include_regex": "((^|[^a-z])(hk|hong kong|hongkong)($|[^a-z])|香港|港线|港線)",
-    "allow_empty": true,
-    "url": "https://www.gstatic.com/generate_204",
-    "interval": "5m",
-    "tolerance": 50
-  },
-  {
-    "tag": "hk-proxy",
-    "type": "selector",
-    "members": ["hk-auto", "all-proxies", "direct"]
-  },
-  {
-    "tag": "us-auto",
-    "type": "urltest",
-    "include_regex": "((^|[^a-z])(us|usa|united states|america|la|los angeles|sjc|sfo|sea|ny|new york)($|[^a-z])|美国|美國|美西|美东|美東|洛杉矶|洛杉磯|纽约|紐約|西雅图|西雅圖|圣何塞|聖何塞|旧金山|舊金山)",
-    "allow_empty": true,
-    "url": "https://www.gstatic.com/generate_204",
-    "interval": "5m",
-    "tolerance": 50
-  },
-  {
-    "tag": "us-proxy",
-    "type": "selector",
-    "members": ["us-auto", "all-proxies", "direct"]
-  },
-  {
-    "tag": "jp-auto",
-    "type": "urltest",
-    "include_regex": "((^|[^a-z])(jp|japan|tokyo|osaka)($|[^a-z])|日本|东京|東京|大阪|日線|日线)",
-    "allow_empty": true,
-    "url": "https://www.gstatic.com/generate_204",
-    "interval": "5m",
-    "tolerance": 50
-  },
-  {
-    "tag": "jp-proxy",
-    "type": "selector",
-    "members": ["jp-auto", "all-proxies", "direct"]
-  },
-  {
-    "tag": "kr-auto",
-    "type": "urltest",
-    "include_regex": "((^|[^a-z])(kr|korea|south korea|seoul)($|[^a-z])|韩国|韓國|首尔|首爾|韩线|韓線)",
-    "allow_empty": true,
-    "url": "https://www.gstatic.com/generate_204",
-    "interval": "5m",
-    "tolerance": 50
-  },
-  {
-    "tag": "kr-proxy",
-    "type": "selector",
-    "members": ["kr-auto", "all-proxies", "direct"]
-  },
-  {
-    "tag": "sg-auto",
-    "type": "urltest",
-    "include_regex": "((^|[^a-z])(sg|singapore)($|[^a-z])|新加坡|獅城|狮城|新線|新线)",
-    "allow_empty": true,
-    "url": "https://www.gstatic.com/generate_204",
-    "interval": "5m",
-    "tolerance": 50
-  },
-  {
-    "tag": "sg-proxy",
-    "type": "selector",
-    "members": ["sg-auto", "all-proxies", "direct"]
-  },
-  {
-    "tag": "proxy",
-    "type": "selector",
-    "members": ["us-proxy", "hk-proxy", "jp-proxy", "kr-proxy", "sg-proxy", "all-proxies", "direct"]
-  }
-]
-```
-
-支持两种分组方式：
-
-- 正则自动匹配节点：`include_regex` + `exclude_regex`
-- 手动指定成员：`members`
-
-### 3.3 `config/routes.json`（分流策略）
-
-示例：
-
-```json
-{
-  "final": "proxy",
-  "rules": [
-    {
-      "domain_suffix": [
-        "openai.com",
-        "chatgpt.com",
-        "oaistatic.com",
-        "claude.ai",
-        "anthropic.com",
-        "gemini.google.com",
-        "aistudio.google.com",
-        "ai.google.dev",
-        "generativelanguage.googleapis.com",
-        "perplexity.ai",
-        "perplexity.com",
-        "x.ai",
-        "grok.com",
-        "cursor.com",
-        "cursor.sh",
-        "githubcopilot.com",
-        "copilot.microsoft.com"
-      ],
-      "outbound": "us-proxy"
-    },
-    {
-      "domain_suffix": [
-        "google.com",
-        "googleapis.com",
-        "gstatic.com",
-        "ggpht.com",
-        "youtube.com",
-        "googlevideo.com",
-        "ytimg.com"
-      ],
-      "outbound": "hk-proxy"
-    }
-  ]
-}
-```
-
-默认规则优先级说明：
-- AI 域名先匹配，走 `us-proxy`（Gemini / Codex / Claude / Perplexity / Grok / Cursor / Copilot 等）。
-- 通用 Google 域名后匹配，走 `hk-proxy`。
-- 其余流量走 `final=proxy`。
-
-## 4. 一键应用
-
-先本地预览生成：
+### 4) 先生成配置（不写入 /etc）
 
 ```bash
 ./fly apply --dry-run
 ```
 
-正式部署（需要 root）：
+会生成：`build/config.json`。
+
+注意：`--dry-run` 会下载订阅并生成配置，但不会自动拉起本地 `subconverter`（不会调用 docker）。如果你的订阅需要转换，请先把 converter 跑起来，或把 `SUBCONVERTER_URL` 指向一个可用的 converter。
+
+### 5) 正式部署（需要 root）
 
 ```bash
 sudo ./fly apply
 ```
 
-`apply` 成功后会自动安装 `/etc/profile.d/fly-proxy.sh`，提供全局可用的 `fly_on` / `fly_status` / `fly_off`。
+部署后默认开启本机代理端口：
 
-## 5. 运行检查
+- mixed inbound: `127.0.0.1:7890`（HTTP + SOCKS5 同端口）
+
+### 6) 验证
 
 ```bash
 ./fly status
 ./fly logs -n 200
+curl -I --max-time 15 --proxy socks5h://127.0.0.1:7890 https://www.gstatic.com/generate_204
 ```
 
-## 6. 回滚
+## 配置说明
 
-如果新配置异常：
+### config/fly.env
 
-```bash
-sudo ./fly rollback
-```
+- `SUBSCRIPTION_FORMAT`
+  - `auto`：自动识别（sing-box JSON / Clash / 通用 URI/base64）
+  - `singbox`：订阅直接返回 sing-box JSON
+  - `clash` / `v2ray`：强制走转换
+- `SUBCONVERTER_URL`
+  - 默认 `http://127.0.0.1:25500/sub`
+  - 当订阅需要转换时会使用它
+- `SUBCONVERTER_AUTO_INSTALL_DOCKER`
+  - 默认 `false`
+  - 只在 `SUBCONVERTER_URL` 指向本机、且需要转换时才会用到
+  - 设为 `true` 表示允许 `fly` 在本机缺 docker 时自动安装 docker（有副作用，慎用）
+- `SINGBOX_VERSION`
+  - 默认 `1.12.20`
+  - 也支持 `latest`（依赖 GitHub Releases API）
 
-## 7. 给 Codex/CLI 设置代理（示例）
+### config/groups.json（节点分组）
 
-### 7.1 启用全局代理开关命令
+默认模板里已经包含：
 
-首次或手动重装可执行：
+- `hk-auto` / `hk-proxy`
+- `us-auto` / `us-proxy`
+- `jp-auto` / `jp-proxy`
+- `kr-auto` / `kr-proxy`
+- `sg-auto` / `sg-proxy`
+- `proxy`（总入口）
 
-```bash
-sudo ./fly proxy-hooks-install
-```
+分组两种写法：
+
+- 正则匹配：`include_regex` / `exclude_regex`（支持英文缩写 + 中文地名）
+- 手动列表：`members`
+
+### config/routes.json（分流规则）
+
+这是一个很薄的规则层：按 `domain_suffix` 命中后，把流量送到某个 `outbound`（比如 `hk-proxy` / `us-proxy`）。
+
+默认模板：
+
+- AI 相关域名 -> `us-proxy`（OpenAI / Claude / Gemini / Perplexity / Grok / Cursor / Copilot 等）
+- Google / YouTube -> `hk-proxy`
+- 其他 -> `final=proxy`
+
+## 代理开关（给终端用）
+
+`sudo ./fly apply` 会写入 `/etc/profile.d/fly-proxy.sh`，里面有三个函数：
+
+- `fly_on`：设置 `ALL_PROXY` / `HTTP_PROXY` / `HTTPS_PROXY`
+- `fly_off`：清空这些变量
+- `fly_status`：查看当前状态
 
 让当前 shell 立即可用：
 
 ```bash
 source /etc/profile.d/fly-proxy.sh
-```
-
-### 7.2 快速开关代理（你要的命令）
-
-```bash
 fly_on
 fly_status
-fly_off
 ```
 
-- `fly_on`：设置 `ALL_PROXY`/`HTTP_PROXY`/`HTTPS_PROXY`
-- `fly_off`：清空这些代理环境变量
-- `fly_status`：查看当前代理环境变量状态
+说明：
 
-### 7.3 不用开关命令时的等价手动方式
+- 环境变量只对“当前 shell 及其子进程”生效，不可能强行让整台机器所有进程立刻切换代理。
+- 想让新开的 shell 默认可用，一般重连/重新登录即可（`/etc/profile.d` 会在登录时被加载；不同发行版/不同 shell 行为可能略有差异）。
 
-如果你只想手动设置当前 shell：
+手动等价写法（只想临时给当前 shell 用）：
 
 ```bash
 export ALL_PROXY="socks5://127.0.0.1:7890"
-export HTTPS_PROXY="http://127.0.0.1:7890"
 export HTTP_PROXY="http://127.0.0.1:7890"
+export HTTPS_PROXY="http://127.0.0.1:7890"
 ```
 
-## 8. 测试
+## 常用命令
 
-项目自带最小测试：
+```bash
+./fly init
+./fly init --force
+
+./fly apply --dry-run
+sudo ./fly apply
+
+./fly status
+./fly logs -n 200
+./fly logs -f -n 200
+
+sudo ./fly rollback
+sudo ./fly proxy-hooks-install
+```
+
+## 排障
+
+- 订阅转换失败/`invalid subscription JSON`
+  - 先看订阅原始内容：`curl -fsSL "$SUBSCRIPTION_URL" | head`
+  - 如果是通用订阅，确认 `SUBCONVERTER_URL` 可用（本机容器或远端服务）
+- `docker pull` 超时
+  - 换镜像源或手动准备好 converter（把 `SUBCONVERTER_URL` 指向你能访问的 converter）
+- 端口没起来
+  - `./fly status`
+  - `./fly logs -n 200`
+  - `ss -lntp | grep 7890`
+
+## 测试
 
 ```bash
 bash tests/test_fly.sh
 ```
-
-## 注意事项
-
-- 本项目默认面向 `systemd` Linux 服务器。
-- `fly apply` 会创建/覆盖 `/etc/systemd/system/<SERVICE_NAME>.service`。
-- 首次部署建议先 `--dry-run`，确认配置生成无误后再正式应用。

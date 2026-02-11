@@ -145,6 +145,8 @@ SUBSCRIPTION_FORMAT="auto"
 SUBCONVERTER_URL="http://127.0.0.1:25500/sub"
 # Optional image override for auto-start local subconverter.
 SUBCONVERTER_IMAGE="docker.1ms.run/tindy2013/subconverter:latest"
+# If docker is not installed and you want fly to auto-install it for local subconverter, set to true.
+SUBCONVERTER_AUTO_INSTALL_DOCKER="false"
 
 # Install and runtime
 SINGBOX_VERSION="1.12.20"
@@ -333,6 +335,7 @@ load_env() {
   : "${SUBSCRIPTION_FORMAT:=auto}"
   : "${SUBCONVERTER_URL:=http://127.0.0.1:25500/sub}"
   : "${SUBCONVERTER_IMAGE:=docker.1ms.run/tindy2013/subconverter:latest}"
+  : "${SUBCONVERTER_AUTO_INSTALL_DOCKER:=false}"
   : "${SINGBOX_VERSION:=1.12.20}"
   : "${INSTALL_DIR:=/usr/local/bin}"
   : "${CONFIG_PATH:=/etc/sing-box/config.json}"
@@ -469,6 +472,10 @@ ensure_docker_for_subconverter() {
     return 0
   fi
 
+  if ! is_true "${SUBCONVERTER_AUTO_INSTALL_DOCKER:-false}"; then
+    die "docker not found; install it manually or set SUBCONVERTER_AUTO_INSTALL_DOCKER=true to let fly install it automatically"
+  fi
+
   require_root
   if command -v apt-get >/dev/null 2>&1; then
     log "docker not found; installing docker.io via apt"
@@ -523,6 +530,7 @@ start_local_subconverter_container() {
 }
 
 ensure_subconverter_ready() {
+  local allow_autostart="${1:-true}"
   local base_url
   base_url="$(subconverter_base_url)"
   if url_reachable "${base_url}"; then
@@ -531,6 +539,10 @@ ensure_subconverter_ready() {
 
   if ! is_local_subconverter_target; then
     die "SUBCONVERTER_URL is unreachable: ${SUBCONVERTER_URL}"
+  fi
+
+  if ! is_true "${allow_autostart}"; then
+    die "local subconverter is unreachable at ${base_url}; dry-run will not auto-start it. start it manually or set SUBCONVERTER_URL to a reachable converter endpoint"
   fi
 
   log "local subconverter not reachable; attempting auto-start"
@@ -551,7 +563,8 @@ ensure_subconverter_ready() {
 convert_subscription_via_subconverter() {
   local source_url="$1"
   local output_file="$2"
-  ensure_subconverter_ready
+  local allow_autostart="${3:-true}"
+  ensure_subconverter_ready "${allow_autostart}"
   local encoded_url
   encoded_url="$(url_encode "${source_url}")"
   curl -fsSL "${SUBCONVERTER_URL}?target=singbox&url=${encoded_url}" -o "${output_file}"
@@ -560,6 +573,7 @@ convert_subscription_via_subconverter() {
 
 fetch_subscription_json() {
   local output_file="$1"
+  local allow_subconverter_autostart="${2:-true}"
   mkdir -p "$(dirname "${output_file}")"
 
   if [[ -n "${SUBSCRIPTION_FILE}" ]]; then
@@ -597,7 +611,7 @@ fetch_subscription_json() {
       clash|uri|uri_b64|unknown_b64|unknown)
         log "auto-detected subscription kind: ${detected_kind}; converting with subconverter"
         rm -f "${raw_file}"
-        convert_subscription_via_subconverter "${SUBSCRIPTION_URL}" "${output_file}"
+        convert_subscription_via_subconverter "${SUBSCRIPTION_URL}" "${output_file}" "${allow_subconverter_autostart}"
         return
         ;;
       html)
@@ -620,7 +634,7 @@ fetch_subscription_json() {
       curl -fsSL "${SUBSCRIPTION_URL}" -o "${output_file}"
       ;;
     clash|v2ray)
-      convert_subscription_via_subconverter "${SUBSCRIPTION_URL}" "${output_file}"
+      convert_subscription_via_subconverter "${SUBSCRIPTION_URL}" "${output_file}" "${allow_subconverter_autostart}"
       ;;
     *)
       die "unsupported SUBSCRIPTION_FORMAT=${SUBSCRIPTION_FORMAT} (supported: auto, singbox, clash, v2ray)"
@@ -984,7 +998,11 @@ cmd_apply() {
   local subscription_json="${BUILD_DIR}/subscription.json"
   local generated_config="${BUILD_DIR}/config.json"
 
-  fetch_subscription_json "${subscription_json}"
+  local allow_subconverter_autostart="true"
+  if is_true "${dry_run}"; then
+    allow_subconverter_autostart="false"
+  fi
+  fetch_subscription_json "${subscription_json}" "${allow_subconverter_autostart}"
   render_config "${subscription_json}" "${generated_config}"
   check_with_local_sing_box "${generated_config}"
 
