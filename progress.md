@@ -47,6 +47,30 @@
 - Files created/modified:
   - `.git/` (initialized)
 
+### Phase 6 (Policy Update): Default Routing Preset
+- **Status:** complete
+- Actions taken:
+  - Updated `fly init` default `groups.json` to create `hk-proxy` and `us-proxy`.
+  - Updated default `routes.json` with precedence: AI domains -> `us-proxy`, Google domains -> `hk-proxy`.
+  - Updated README examples and policy notes.
+  - Extended tests to assert generated config contains `us-proxy` and `hk-proxy` routing outputs.
+- Files created/modified:
+  - `fly` (updated defaults)
+  - `README.md` (updated config examples)
+  - `tests/test_fly.sh` (enhanced assertions)
+
+### Phase 7 (Policy Update): JP/KR/SG + Fine AI Rules
+- **Status:** complete
+- Actions taken:
+  - Added default region groups for Japan/Korea/Singapore with Chinese+English tag matching.
+  - Expanded AI domain defaults to include Perplexity/Grok/Cursor/Copilot routed to `us-proxy`.
+  - Updated README examples and policy text accordingly.
+  - Extended tests to validate Chinese region tags for HK/US/JP/KR/SG all match expected auto groups.
+- Files created/modified:
+  - `fly` (updated default groups/routes templates)
+  - `README.md` (updated examples and AI rule description)
+  - `tests/test_fly.sh` (expanded region matching assertions)
+
 ### Phase 1: Requirements & Discovery
 - **Status:** complete
 - **Started:** 2026-02-11

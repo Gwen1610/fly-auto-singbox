@@ -88,18 +88,79 @@ CHECK_URL="https://www.gstatic.com/generate_204"
     "include_regex": ".*"
   },
   {
-    "tag": "auto",
+    "tag": "hk-auto",
     "type": "urltest",
-    "include_regex": "(hk|sg|jp|us)",
+    "include_regex": "((^|[^a-z])(hk|hong kong|hongkong)($|[^a-z])|香港|港线|港線)",
     "allow_empty": true,
     "url": "https://www.gstatic.com/generate_204",
     "interval": "5m",
     "tolerance": 50
   },
   {
+    "tag": "hk-proxy",
+    "type": "selector",
+    "members": ["hk-auto", "all-proxies", "direct"]
+  },
+  {
+    "tag": "us-auto",
+    "type": "urltest",
+    "include_regex": "((^|[^a-z])(us|usa|united states|america|la|los angeles|sjc|sfo|sea|ny|new york)($|[^a-z])|美国|美國|美西|美东|美東|洛杉矶|洛杉磯|纽约|紐約|西雅图|西雅圖|圣何塞|聖何塞|旧金山|舊金山)",
+    "allow_empty": true,
+    "url": "https://www.gstatic.com/generate_204",
+    "interval": "5m",
+    "tolerance": 50
+  },
+  {
+    "tag": "us-proxy",
+    "type": "selector",
+    "members": ["us-auto", "all-proxies", "direct"]
+  },
+  {
+    "tag": "jp-auto",
+    "type": "urltest",
+    "include_regex": "((^|[^a-z])(jp|japan|tokyo|osaka)($|[^a-z])|日本|东京|東京|大阪|日線|日线)",
+    "allow_empty": true,
+    "url": "https://www.gstatic.com/generate_204",
+    "interval": "5m",
+    "tolerance": 50
+  },
+  {
+    "tag": "jp-proxy",
+    "type": "selector",
+    "members": ["jp-auto", "all-proxies", "direct"]
+  },
+  {
+    "tag": "kr-auto",
+    "type": "urltest",
+    "include_regex": "((^|[^a-z])(kr|korea|south korea|seoul)($|[^a-z])|韩国|韓國|首尔|首爾|韩线|韓線)",
+    "allow_empty": true,
+    "url": "https://www.gstatic.com/generate_204",
+    "interval": "5m",
+    "tolerance": 50
+  },
+  {
+    "tag": "kr-proxy",
+    "type": "selector",
+    "members": ["kr-auto", "all-proxies", "direct"]
+  },
+  {
+    "tag": "sg-auto",
+    "type": "urltest",
+    "include_regex": "((^|[^a-z])(sg|singapore)($|[^a-z])|新加坡|獅城|狮城|新線|新线)",
+    "allow_empty": true,
+    "url": "https://www.gstatic.com/generate_204",
+    "interval": "5m",
+    "tolerance": 50
+  },
+  {
+    "tag": "sg-proxy",
+    "type": "selector",
+    "members": ["sg-auto", "all-proxies", "direct"]
+  },
+  {
     "tag": "proxy",
     "type": "selector",
-    "members": ["auto", "all-proxies", "direct"]
+    "members": ["us-proxy", "hk-proxy", "jp-proxy", "kr-proxy", "sg-proxy", "all-proxies", "direct"]
   }
 ]
 ```
@@ -118,8 +179,38 @@ CHECK_URL="https://www.gstatic.com/generate_204"
   "final": "proxy",
   "rules": [
     {
-      "domain_suffix": ["openai.com", "anthropic.com"],
-      "outbound": "proxy"
+      "domain_suffix": [
+        "openai.com",
+        "chatgpt.com",
+        "oaistatic.com",
+        "claude.ai",
+        "anthropic.com",
+        "gemini.google.com",
+        "aistudio.google.com",
+        "ai.google.dev",
+        "generativelanguage.googleapis.com",
+        "perplexity.ai",
+        "perplexity.com",
+        "x.ai",
+        "grok.com",
+        "cursor.com",
+        "cursor.sh",
+        "githubcopilot.com",
+        "copilot.microsoft.com"
+      ],
+      "outbound": "us-proxy"
+    },
+    {
+      "domain_suffix": [
+        "google.com",
+        "googleapis.com",
+        "gstatic.com",
+        "ggpht.com",
+        "youtube.com",
+        "googlevideo.com",
+        "ytimg.com"
+      ],
+      "outbound": "hk-proxy"
     },
     {
       "geoip": ["cn"],
@@ -128,6 +219,11 @@ CHECK_URL="https://www.gstatic.com/generate_204"
   ]
 }
 ```
+
+默认规则优先级说明：
+- AI 域名先匹配，走 `us-proxy`（Gemini / Codex / Claude / Perplexity / Grok / Cursor / Copilot 等）。
+- 通用 Google 域名后匹配，走 `hk-proxy`。
+- 其余流量走 `final=proxy`，中国大陆 IP 走 `direct`。
 
 ## 4. 一键应用
 
