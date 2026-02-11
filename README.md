@@ -10,6 +10,7 @@
 - 强制重建默认模板（覆盖并备份旧文件）：`fly init --force`
 - 按配置生成 sing-box 最终配置：`fly apply --dry-run`
 - 自动部署到 Linux（安装 sing-box、写入配置、拉起 systemd 服务）：`sudo fly apply`
+- 安装全局代理开关命令：`fly proxy-hooks-install`（提供 `fly_on` / `fly_status` / `fly_off`）
 - 服务状态与日志：`fly status` / `fly logs`
 - 失败回滚：`sudo fly rollback`
 
@@ -229,10 +230,6 @@ ENABLE_DEPRECATED_SPECIAL_OUTBOUNDS="true"
         "ytimg.com"
       ],
       "outbound": "hk-proxy"
-    },
-    {
-      "geoip": ["cn"],
-      "outbound": "direct"
     }
   ]
 }
@@ -241,7 +238,7 @@ ENABLE_DEPRECATED_SPECIAL_OUTBOUNDS="true"
 默认规则优先级说明：
 - AI 域名先匹配，走 `us-proxy`（Gemini / Codex / Claude / Perplexity / Grok / Cursor / Copilot 等）。
 - 通用 Google 域名后匹配，走 `hk-proxy`。
-- 其余流量走 `final=proxy`，中国大陆 IP 走 `direct`。
+- 其余流量走 `final=proxy`。
 
 ## 4. 一键应用
 
@@ -256,6 +253,8 @@ ENABLE_DEPRECATED_SPECIAL_OUTBOUNDS="true"
 ```bash
 sudo ./fly apply
 ```
+
+`apply` 成功后会自动安装 `/etc/profile.d/fly-proxy.sh`，提供全局可用的 `fly_on` / `fly_status` / `fly_off`。
 
 ## 5. 运行检查
 
@@ -274,7 +273,35 @@ sudo ./fly rollback
 
 ## 7. 给 Codex/CLI 设置代理（示例）
 
-部署成功后，如果你要让当前 shell 走本机代理：
+### 7.1 启用全局代理开关命令
+
+首次或手动重装可执行：
+
+```bash
+sudo ./fly proxy-hooks-install
+```
+
+让当前 shell 立即可用：
+
+```bash
+source /etc/profile.d/fly-proxy.sh
+```
+
+### 7.2 快速开关代理（你要的命令）
+
+```bash
+fly_on
+fly_status
+fly_off
+```
+
+- `fly_on`：设置 `ALL_PROXY`/`HTTP_PROXY`/`HTTPS_PROXY`
+- `fly_off`：清空这些代理环境变量
+- `fly_status`：查看当前代理环境变量状态
+
+### 7.3 不用开关命令时的等价手动方式
+
+如果你只想手动设置当前 shell：
 
 ```bash
 export ALL_PROXY="socks5://127.0.0.1:7890"

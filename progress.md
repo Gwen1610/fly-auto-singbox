@@ -97,6 +97,19 @@
   - `README.md` (auto subscription workflow docs)
   - `tests/test_fly.sh` (new default env expectations)
 
+### Phase 10 (Feature): Global Proxy Toggle Commands
+- **Status:** complete
+- Actions taken:
+  - Added `fly proxy-hooks-install` command to install global shell hooks.
+  - Added `fly_on` / `fly_off` / `fly_status` functions into generated hook file.
+  - Wired `./fly apply` to auto-install proxy hooks for immediate post-deploy usage.
+  - Removed deprecated `geoip` default route rule from generated template to avoid sing-box 1.12 startup failure.
+  - Updated README with full usage flow for proxy toggle commands.
+- Files created/modified:
+  - `fly` (new subcommand + auto hook install + route template update)
+  - `README.md` (proxy command docs)
+  - `tests/test_fly.sh` (proxy hook behavior test)
+
 ### Phase 1: Requirements & Discovery
 - **Status:** complete
 - **Started:** 2026-02-11

@@ -41,6 +41,7 @@ fly - one-command sing-box bootstrap toolkit
 Usage:
   ./fly init [--force]
   ./fly apply [--dry-run]
+  ./fly proxy-hooks-install
   ./fly status
   ./fly logs [-f] [-n lines]
   ./fly rollback
@@ -49,6 +50,7 @@ Usage:
 Command summary:
   init       Create config templates under ./config (--force to overwrite)
   apply      Build config from subscription + groups + routes, then deploy
+  proxy-hooks-install  Install fly_on/fly_off/fly_status shell functions system-wide
   status     Show current sing-box and service status
   logs       Show service logs (journalctl)
   rollback   Restore previous config snapshot and restart service
@@ -65,6 +67,53 @@ backup_existing_file() {
   local backup_file="${STATE_DIR}/${base_name}.bak.$(date +%Y%m%d%H%M%S)"
   cp "${target_file}" "${backup_file}"
   log "backup ${target_file} -> ${backup_file}"
+}
+
+proxy_hook_target_file() {
+  if [[ -n "${FLY_PROXY_HOOK_FILE:-}" ]]; then
+    printf '%s\n' "${FLY_PROXY_HOOK_FILE}"
+  else
+    printf '%s\n' "/etc/profile.d/fly-proxy.sh"
+  fi
+}
+
+install_proxy_shell_hooks() {
+  local proxy_host="$1"
+  local proxy_port="$2"
+  local hook_file
+  hook_file="$(proxy_hook_target_file)"
+  local hook_dir
+  hook_dir="$(dirname "${hook_file}")"
+
+  if [[ ("${hook_file}" == /etc/* || "${hook_file}" == /usr/*) && "${EUID}" -ne 0 ]]; then
+    die "installing proxy hooks to ${hook_file} requires root"
+  fi
+
+  install -d "${hook_dir}"
+  cat > "${hook_file}" <<EOF
+# shellcheck shell=sh
+
+fly_on() {
+  export ALL_PROXY="socks5://${proxy_host}:${proxy_port}"
+  export HTTP_PROXY="http://${proxy_host}:${proxy_port}"
+  export HTTPS_PROXY="http://${proxy_host}:${proxy_port}"
+  export all_proxy="\${ALL_PROXY}"
+  export http_proxy="\${HTTP_PROXY}"
+  export https_proxy="\${HTTPS_PROXY}"
+  echo "[fly-proxy] ON -> \${ALL_PROXY}"
+}
+
+fly_off() {
+  unset ALL_PROXY HTTP_PROXY HTTPS_PROXY all_proxy http_proxy https_proxy
+  echo "[fly-proxy] OFF"
+}
+
+fly_status() {
+  env | grep -E '^(ALL_PROXY|HTTP_PROXY|HTTPS_PROXY|all_proxy|http_proxy|https_proxy)=' || echo "[fly-proxy] OFF"
+}
+EOF
+  chmod 644 "${hook_file}"
+  log "installed proxy hooks: ${hook_file}"
 }
 
 init_files() {
@@ -259,10 +308,6 @@ EOF
         "ytimg.com"
       ],
       "outbound": "hk-proxy"
-    },
-    {
-      "geoip": ["cn"],
-      "outbound": "direct"
     }
   ]
 }
@@ -863,6 +908,8 @@ install_sing_box_if_needed() {
   install -d "${INSTALL_DIR}"
   install -m 755 "${binary_path}" "${INSTALL_DIR}/sing-box"
   log "installed sing-box to ${INSTALL_DIR}/sing-box"
+  trap - RETURN
+  rm -rf "${tmp_dir:-}"
 }
 
 backup_current_config() {
@@ -955,10 +1002,18 @@ cmd_apply() {
   log "applied config to ${CONFIG_PATH}"
 
   install_systemd_service
+  install_proxy_shell_hooks "127.0.0.1" "${INBOUND_MIXED_PORT}"
   healthcheck_proxy
 
   cp "${generated_config}" "${STATE_DIR}/last_applied_config.json"
   log "apply complete. Use ./fly status and ./fly logs for verification."
+  log "shell proxy commands ready: source $(proxy_hook_target_file) then run fly_on / fly_status / fly_off"
+}
+
+cmd_proxy_hooks_install() {
+  load_env
+  install_proxy_shell_hooks "127.0.0.1" "${INBOUND_MIXED_PORT}"
+  log "to use in current shell now: source $(proxy_hook_target_file)"
 }
 
 cmd_status() {
@@ -1032,6 +1087,7 @@ main() {
   case "${cmd}" in
     init) init_files "$@" ;;
     apply) cmd_apply "$@" ;;
+    proxy-hooks-install) cmd_proxy_hooks_install "$@" ;;
     status) cmd_status "$@" ;;
     logs) cmd_logs "$@" ;;
     rollback) cmd_rollback "$@" ;;

@@ -157,5 +157,23 @@ if "新加坡-01" not in sg_members:
     raise SystemExit("ASSERT FAIL: sg-auto did not match Chinese SG node tag")
 PY
 
+mkdir -p "${WORK_DIR}/profile"
+FLY_PROXY_HOOK_FILE="${WORK_DIR}/profile/fly-proxy.sh" ./fly proxy-hooks-install
+assert_file_exists "${WORK_DIR}/profile/fly-proxy.sh"
+assert_contains '^fly_on\(\)' "${WORK_DIR}/profile/fly-proxy.sh"
+assert_contains '^fly_off\(\)' "${WORK_DIR}/profile/fly-proxy.sh"
+assert_contains '^fly_status\(\)' "${WORK_DIR}/profile/fly-proxy.sh"
+source "${WORK_DIR}/profile/fly-proxy.sh"
+fly_on >/dev/null
+if [[ "${ALL_PROXY:-}" != "socks5://127.0.0.1:7890" ]]; then
+  echo "ASSERT FAIL: fly_on did not set ALL_PROXY correctly" >&2
+  exit 1
+fi
+fly_off >/dev/null
+if [[ -n "${ALL_PROXY:-}" ]]; then
+  echo "ASSERT FAIL: fly_off did not unset ALL_PROXY" >&2
+  exit 1
+fi
+
 popd >/dev/null
 echo "PASS: fly init/apply dry-run"
