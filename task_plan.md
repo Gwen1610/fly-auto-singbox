@@ -34,7 +34,7 @@ Phase 5
 
 ### Phase 5: GitHub Publishing
 - [x] Initialize git repository (if absent)
-- [ ] Commit project files
+- [x] Commit project files
 - [ ] Push to GitHub or provide precise publish handoff if auth/remote missing
 - **Status:** in_progress
 
@@ -56,6 +56,7 @@ Phase 5
 |-------|---------|------------|
 | `planning-with-files` skill name mismatch | 1 | Loaded using exact listed name `planning-with-files/skills/planning-with-files` |
 | Missing path `/Users/dum/.codex/skills/planning-with-files/planning-with-files/SKILL.md` | 1 | Used available path `/Users/dum/.codex/skills/planning-with-files/skills/planning-with-files/SKILL.md` |
+| `github.com` DNS resolution failed in current environment | 1 | Prepared local commit and waiting for network-enabled push handoff |
 
 ## Notes
 - Re-read this file before final recommendations.

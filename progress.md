@@ -42,6 +42,8 @@
 - Actions taken:
   - Initialized git repository in current project.
   - Checked GitHub CLI auth status; current token is invalid.
+  - Committed all project files locally (`c38cf81`).
+  - Attempted `gh repo create --push` and direct git GitHub access; failed because environment cannot resolve `github.com`.
 - Files created/modified:
   - `.git/` (initialized)
 
@@ -95,6 +97,7 @@
 | TDD RED check | `bash tests/test_fly.sh` (before `fly` exists) | Fail due missing implementation | Failed with `fly` missing | PASS |
 | TDD GREEN check | `bash tests/test_fly.sh` (after implementation) | Pass init + dry-run generation | Passed | PASS |
 | CLI smoke | `./fly help` | Show usage and commands | Printed help successfully | PASS |
+| GitHub connectivity | `gh repo create ... --push` | Create remote and push | Failed: cannot resolve/connect `api.github.com` | FAIL (env) |
 
 ## Error Log
 | Timestamp | Error | Attempt | Resolution |
@@ -102,12 +105,13 @@
 | 2026-02-11 | `Skill not found: planning-with-files` | 1 | Used exact full skill name from loader output |
 | 2026-02-11 | Missing expected skill path variant | 1 | Switched to existing path under `/skills/planning-with-files/skills/planning-with-files/` |
 | 2026-02-11 | `gh auth status` token invalid | 1 | Need re-auth with `gh auth login` before remote push |
+| 2026-02-11 | `Could not resolve host: github.com` | 1 | Push blocked in current environment; provide manual push handoff |
 
 ## 5-Question Reboot Check
 | Question | Answer |
 |----------|--------|
 | Where am I? | New Scope Phase 5 (GitHub publishing) |
-| Where am I going? | Finalize commit + push to GitHub after auth recovery |
+| Where am I going? | Finalize remote push once network/DNS to GitHub is available |
 | What's the goal? | Deliver foolproof `fly` automation + README + GitHub publish |
-| What have I learned? | `fly` flow works in dry-run tests; current GitHub token invalid |
-| What have I done? | Implemented script, tests, docs, and initialized git repo |
+| What have I learned? | `fly` flow works in dry-run tests; GitHub push blocked by auth + DNS constraints |
+| What have I done? | Implemented script/tests/docs, initialized git repo, committed changes |
