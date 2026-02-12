@@ -97,7 +97,22 @@ assert_file_exists "./config.json"
 assert_contains '"tag": "Proxy"' "./config.json"
 assert_contains '"tag": "America"' "./config.json"
 assert_contains '"tag": "HongKong"' "./config.json"
-assert_contains '"outbound": "America"' "./config.json"
+python3 - <<'PY'
+import json
+
+with open("./config.json", "r", encoding="utf-8") as f:
+    cfg = json.load(f)
+
+route = cfg.get("route", {})
+if route.get("final") != "Proxy":
+    raise SystemExit("ASSERT FAIL: route.final is not Proxy")
+
+rules = route.get("rules")
+if not isinstance(rules, list):
+    raise SystemExit("ASSERT FAIL: route.rules is not array")
+if len(rules) != 0:
+    raise SystemExit("ASSERT FAIL: expected route.rules to be empty by default")
+PY
 
 ./fly pipeline
 assert_file_exists "./config.json"

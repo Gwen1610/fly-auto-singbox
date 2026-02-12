@@ -2,6 +2,7 @@ build/
 state/
 config/fly.env
 config/extract.providers.json
+config/route-rules.json
 *.log
 .sing-box.pid
 __pycache__/

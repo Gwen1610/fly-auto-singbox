@@ -10,6 +10,8 @@ ENV_FILE="${CONFIG_DIR}/fly.env"
 ENV_EXAMPLE_FILE="${CONFIG_DIR}/fly.env.example"
 PROVIDERS_FILE="${CONFIG_DIR}/extract.providers.json"
 PROVIDERS_EXAMPLE_FILE="${CONFIG_DIR}/extract.providers.example.json"
+ROUTE_RULES_FILE_DEFAULT="${CONFIG_DIR}/route-rules.json"
+ROUTE_RULES_EXAMPLE_FILE="${CONFIG_DIR}/route-rules.example.json"
 
 log() {
   printf '[fly] %s\n' "$*"
@@ -294,6 +296,9 @@ init_files() {
   if [[ ! -f "${PROVIDERS_EXAMPLE_FILE}" ]]; then
     die "missing template: ${PROVIDERS_EXAMPLE_FILE}"
   fi
+  if [[ ! -f "${ROUTE_RULES_EXAMPLE_FILE}" ]]; then
+    die "missing template: ${ROUTE_RULES_EXAMPLE_FILE}"
+  fi
 
   if [[ ! -f "${ENV_FILE}" ]] || is_true "${force}"; then
     if [[ -f "${ENV_FILE}" ]]; then
@@ -313,6 +318,16 @@ init_files() {
     log "generated ${PROVIDERS_FILE}"
   else
     log "exists ${PROVIDERS_FILE}, skip"
+  fi
+
+  if [[ ! -f "${ROUTE_RULES_FILE_DEFAULT}" ]] || is_true "${force}"; then
+    if [[ -f "${ROUTE_RULES_FILE_DEFAULT}" ]]; then
+      backup_existing_file "${ROUTE_RULES_FILE_DEFAULT}"
+    fi
+    cp "${ROUTE_RULES_EXAMPLE_FILE}" "${ROUTE_RULES_FILE_DEFAULT}"
+    log "generated ${ROUTE_RULES_FILE_DEFAULT}"
+  else
+    log "exists ${ROUTE_RULES_FILE_DEFAULT}, skip"
   fi
 
   log "init complete"

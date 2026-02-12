@@ -41,4 +41,11 @@
 - [x] 修复订阅 URL 误判 bug（`http/https` 不再当作节点协议前缀）。
 - [x] 示例配置默认 `enabled=true`。
 - [x] 再次完成验证（`bash -n fly`、`python3 -m py_compile ...`、`bash tests/test_pipeline.sh`）。
-- [ ] 提交并 push 本轮“extract 兼容修复”改动。
+- [x] 提交并 push 本轮“extract 兼容修复”改动。
+- [x] 将 `config/route-rules.json` 改为 `config/route-rules.example.json` 参考模板。
+- [x] `./fly init` 支持从 `route-rules.example.json` 生成 `route-rules.json`。
+- [x] 默认 route 策略调整为无分流规则（`final=Proxy`, `rules=[]`）。
+- [x] README 增加 `base-template/minimal_four_regions/route-rules.example` 作用说明。
+- [x] 更新 `tests/test_pipeline.sh` 默认路由断言（`route.rules` 为空）。
+- [x] 完成验证（`bash -n fly`、`conda run -n yellow python -m py_compile ...`、`bash tests/test_pipeline.sh`）。
+- [ ] 提交并 push 本轮“route-rules 模板化 + 默认无分流”改动。

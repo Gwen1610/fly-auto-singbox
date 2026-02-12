@@ -8,7 +8,7 @@
 4) `fly install-singbox` 自动下载并安装 Linux/mac 对应版本（当前会话仅 dry-run 验证，不实际下载）。
 
 ## Current Phase
-Phase 9
+Phase 10
 
 ## Phases
 
@@ -65,6 +65,14 @@ Phase 9
 - [x] 放宽 US/HK/SG/JP 匹配规则（支持 US01/HK01/SGP/JP 等）
 - [x] `extract` 失败时输出 sample tags 辅助排查
 - [x] 补充 `config_template/minimal_four_regions.json` 兼容文件
+- [x] 提交并 push
+- **Status:** complete
+
+### Phase 10: Route Rules Template & Default No-Split
+- [x] 将 `config/route-rules.json` 改为 `config/route-rules.example.json` 参考模板
+- [x] `./fly init` 默认生成 `config/route-rules.json`（无分流，`final=Proxy`）
+- [x] README 补充 `base-template` / `minimal_four_regions` / `route-rules.example` 作用说明
+- [x] 更新测试断言，默认校验 `route.rules=[]`
 - [ ] 提交并 push
 - **Status:** in_progress
 
@@ -73,3 +81,4 @@ Phase 9
 |---|---|---|
 | 并行 shell 写文件被审批策略拒绝 | 1 | 改用 `apply_patch` 创建/更新文件 |
 | `SUDO_BIN=\"\"` 在加载默认值后被覆盖为 `sudo` | 1 | `load_env` 改为仅在变量未定义时才设置默认 sudo |
+| 并行执行验证命令时单条命令被审批策略拒绝 | 1 | 拆分为单独命令执行，通过后继续 |

@@ -15,10 +15,11 @@ pip install -r requirements.txt
 ./fly init
 ```
 
-会生成两个你要编辑的文件：
+会生成三个你要编辑的文件：
 
 - `config/fly.env`
 - `config/extract.providers.json`
+- `config/route-rules.json`（由 `config/route-rules.example.json` 生成）
 
 ## 3. 先检查是否已安装 sing-box
 
@@ -112,7 +113,14 @@ sing-box version
 
 输入规则文件：
 
-- `config/route-rules.json`
+- `config/route-rules.json`（默认由 `config/route-rules.example.json` 生成）
+
+默认内容：
+
+- `final` 为 `Proxy`
+- `rules` 为空数组（即不做任何分流规则，只走你在 `Proxy` 里选的出口）
+
+你要加分流时，只改 `config/route-rules.json` 即可。
 
 输出文件：
 
@@ -155,18 +163,30 @@ sing-box version
 - PID: `.sing-box.pid`
 - Log: `sing-box.log`
 
-## 9. 测试
+## 9. 配置文件作用
+
+- `config/base-template.json`
+  - `build-config` 的主模板，定义 inbounds/dns/route 基础结构。
+  - 运行时实际使用的是这个文件。
+- `config_template/minimal_four_regions.json`
+  - 兼容模板，主要给旧路径/旧脚本引用。
+  - 当前内容与 `config/base-template.json` 保持一致，避免历史流程报缺文件。
+- `config/route-rules.example.json`
+  - 分流规则参考模板。
+  - `./fly init` 会复制为 `config/route-rules.json` 供你编辑。
+
+## 10. 测试
 
 ```bash
 bash tests/test_pipeline.sh
 ```
 
-## 10. 署名
+## 11. 署名
 
 - 内置节点提取器代码来自开源项目 `sing-box-subscribe`。
 - 原作者：`Toperlock`（仓库：`https://github.com/Toperlock/sing-box-subscribe`）。
 
-## 11. 兼容文件
+## 12. 兼容文件
 
 仓库内已提供：
 

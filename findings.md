@@ -61,3 +61,15 @@
 - 已新增 `config_template/minimal_four_regions.json` 兼容文件，避免旧路径引用报缺失。
 - 进一步修复：从 `SHARE_PREFIXES` 移除 `http://` 和 `https://`，避免把订阅 URL 误判为节点 URI，导致不下载订阅内容。
 - `extract.providers` 示例默认 `enabled` 调整为 `true`，降低初始化后踩坑概率。
+
+## 2026-02-12 (route rules template + default no-split)
+- 已将默认分流文件从仓库内固定 `config/route-rules.json` 调整为参考模板 `config/route-rules.example.json`。
+- `./fly init` 现在会自动从 `route-rules.example.json` 生成可编辑的 `config/route-rules.json`。
+- 默认路由策略改为不含分流规则：
+  - `final = Proxy`
+  - `rules = []`
+- `tests/test_pipeline.sh` 已同步改为校验 `config.json` 中 `route.final=Proxy` 且 `route.rules` 为空。
+- README 新增“配置文件作用”章节，明确：
+  - `config/base-template.json`：运行时主模板；
+  - `config_template/minimal_four_regions.json`：旧路径兼容模板；
+  - `config/route-rules.example.json`：分流规则参考模板。
