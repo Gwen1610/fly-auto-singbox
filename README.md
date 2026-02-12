@@ -166,14 +166,12 @@ sing-box version
 ## 9. 配置文件作用
 
 - `config/base-template.json`
-  - `build-config` 的主模板，定义 inbounds/dns/route 基础结构。
+  - `build-config` 的唯一主模板，定义 inbounds/dns/route 基础结构。
   - 运行时实际使用的是这个文件。
-- `config_template/minimal_four_regions.json`
-  - 兼容模板，主要给旧路径/旧脚本引用。
-  - 当前内容与 `config/base-template.json` 保持一致，避免历史流程报缺文件。
 - `config/route-rules.example.json`
   - 分流规则参考模板。
   - `./fly init` 会复制为 `config/route-rules.json` 供你编辑。
+  - 默认是空规则，不包含任何预置分流策略。
 
 ## 10. 测试
 
@@ -185,11 +183,3 @@ bash tests/test_pipeline.sh
 
 - 内置节点提取器代码来自开源项目 `sing-box-subscribe`。
 - 原作者：`Toperlock`（仓库：`https://github.com/Toperlock/sing-box-subscribe`）。
-
-## 12. 兼容文件
-
-仓库内已提供：
-
-- `config_template/minimal_four_regions.json`
-
-用于兼容旧习惯/旧配置引用路径。

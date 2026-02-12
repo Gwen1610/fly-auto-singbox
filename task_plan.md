@@ -8,7 +8,7 @@
 4) `fly install-singbox` 自动下载并安装 Linux/mac 对应版本（当前会话仅 dry-run 验证，不实际下载）。
 
 ## Current Phase
-Phase 10
+Phase 11
 
 ## Phases
 
@@ -73,6 +73,13 @@ Phase 10
 - [x] `./fly init` 默认生成 `config/route-rules.json`（无分流，`final=Proxy`）
 - [x] README 补充 `base-template` / `minimal_four_regions` / `route-rules.example` 作用说明
 - [x] 更新测试断言，默认校验 `route.rules=[]`
+- [x] 提交并 push
+- **Status:** complete
+
+### Phase 11: Remove Legacy Strategy From Base Template
+- [x] 从 `config/base-template.json` 移除所有 `geosite/geoip/rule_set` 相关策略
+- [x] 删除 `config_template/minimal_four_regions.json`，仅保留单一模板
+- [x] README 与测试同步“无预置分流策略”行为
 - [x] 提交并 push
 - **Status:** complete
 

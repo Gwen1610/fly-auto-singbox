@@ -22,6 +22,15 @@ assert_contains() {
   }
 }
 
+assert_not_contains() {
+  local pattern="$1"
+  local path="$2"
+  if grep -qE "${pattern}" "${path}"; then
+    echo "ASSERT FAIL: pattern '${pattern}' should not appear in ${path}" >&2
+    exit 1
+  fi
+}
+
 cp -R "${ROOT_DIR}" "${WORK_DIR}/repo"
 cd "${WORK_DIR}/repo"
 
@@ -97,6 +106,8 @@ assert_file_exists "./config.json"
 assert_contains '"tag": "Proxy"' "./config.json"
 assert_contains '"tag": "America"' "./config.json"
 assert_contains '"tag": "HongKong"' "./config.json"
+assert_not_contains 'geosite' "./config.json"
+assert_not_contains 'geoip' "./config.json"
 python3 - <<'PY'
 import json
 

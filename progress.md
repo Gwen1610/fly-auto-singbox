@@ -49,3 +49,7 @@
 - [x] 更新 `tests/test_pipeline.sh` 默认路由断言（`route.rules` 为空）。
 - [x] 完成验证（`bash -n fly`、`conda run -n yellow python -m py_compile ...`、`bash tests/test_pipeline.sh`）。
 - [x] 提交并 push 本轮“route-rules 模板化 + 默认无分流”改动。
+- [x] 从 `config/base-template.json` 移除全部 `geosite/geoip/rule_set` 预置策略。
+- [x] 删除 `config_template/minimal_four_regions.json`，统一模板入口为 `config/base-template.json`。
+- [x] 更新 README 与测试，确保默认输出不含 `geosite/geoip`。
+- [x] 提交并 push 本轮“移除历史分流策略”改动。

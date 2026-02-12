@@ -73,3 +73,10 @@
   - `config/base-template.json`：运行时主模板；
   - `config_template/minimal_four_regions.json`：旧路径兼容模板；
   - `config/route-rules.example.json`：分流规则参考模板。
+
+## 2026-02-12 (remove legacy geosite/geoip strategy)
+- 用户要求彻底移除历史预置分流策略（包括 `geosite-category-ads-all`、`geoip-cn` 等）。
+- 已从 `config/base-template.json` 删除所有 `route.rule_set` 与 DNS 中 `rule_set` 相关内容。
+- 现在默认模板只保留基础网络结构，不内置任何基于 geosite/geoip 的策略。
+- `config_template/minimal_four_regions.json` 已删除，模板来源统一为 `config/base-template.json`。
+- 测试新增断言：生成的 `config.json` 不应包含 `geosite` 或 `geoip` 字样。
