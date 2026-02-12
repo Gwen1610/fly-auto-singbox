@@ -92,3 +92,4 @@
 - [x] 新增 `docs/future-work.md`，整理后续优化空间。
 - [x] 更新 README，补充默认连通性注入说明与 Future Work 链接。
 - [x] 验证通过：`bash tests/test_pipeline.sh`、`sing-box check -c config.json`。
+- [x] 提交并 push 到 `origin/main`。

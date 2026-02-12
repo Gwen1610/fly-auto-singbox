@@ -134,7 +134,7 @@ Complete (Phase 17)
 - [x] 更新 README 与新增 `docs/future-work.md`
 - [x] 更新测试断言
 - [x] 完成验证并推送到 GitHub
-- **Status:** in_progress
+- **Status:** complete
 
 ## Errors Encountered
 | Error | Attempt | Resolution |
