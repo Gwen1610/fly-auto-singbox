@@ -37,6 +37,7 @@ cd "${WORK_DIR}/repo"
 ./fly init
 assert_file_exists "./config/fly.env"
 assert_file_exists "./config/extract.providers.json"
+assert_file_exists "./config/rule-sources.json"
 assert_file_exists "./config/route-rules.json"
 assert_file_exists "./config/base-template.json"
 
@@ -84,6 +85,7 @@ PYTHON_BIN="python3"
 SING_BOX_BIN="./bin/sing-box"
 SUDO_BIN=""
 EXTRACT_PROVIDERS_FILE="./config/extract.providers.json"
+RULE_SOURCES_FILE="./config/rule-sources.json"
 NODES_FILE="./build/nodes.json"
 ROUTE_RULES_FILE="./config/route-rules.json"
 BASE_TEMPLATE_FILE="./config/base-template.json"
@@ -123,6 +125,69 @@ if not isinstance(rules, list):
     raise SystemExit("ASSERT FAIL: route.rules is not array")
 if len(rules) != 0:
     raise SystemExit("ASSERT FAIL: expected route.rules to be empty by default")
+PY
+
+cat > "./build/qx-openai.list" <<'EOF'
+DOMAIN-SUFFIX,openai.com
+DOMAIN,chat.openai.com
+DOMAIN-KEYWORD,chatgpt
+IP-CIDR,1.1.1.1/32,no-resolve
+EOF
+cat > "./build/youtube.yaml" <<'EOF'
+payload:
+  - DOMAIN-SUFFIX,youtube.com
+  - DOMAIN,music.youtube.com
+  - DOMAIN-KEYWORD,youtube
+EOF
+cat > "./build/domains.txt" <<'EOF'
+.example.org
+example.net
+EOF
+cat > "./config/rule-sources.json" <<'JSON'
+{
+  "final": "Proxy",
+  "prepend_rules": [],
+  "sources": [
+    {
+      "tag": "OpenAI",
+      "enabled": true,
+      "url": "./build/qx-openai.list",
+      "outbound": "America"
+    },
+    {
+      "tag": "YouTube",
+      "enabled": true,
+      "url": "./build/youtube.yaml",
+      "outbound": "HongKong"
+    },
+    {
+      "tag": "Custom",
+      "enabled": true,
+      "url": "./build/domains.txt",
+      "outbound": "Singapore"
+    }
+  ],
+  "append_rules": []
+}
+JSON
+
+./fly build-rules
+assert_contains '"outbound": "America"' "./config/route-rules.json"
+assert_contains '"outbound": "HongKong"' "./config/route-rules.json"
+assert_contains '"outbound": "Singapore"' "./config/route-rules.json"
+assert_contains '"domain_suffix": \[' "./config/route-rules.json"
+assert_contains '"domain": \[' "./config/route-rules.json"
+
+./fly build-config
+python3 - <<'PY'
+import json
+
+with open("./config.json", "r", encoding="utf-8") as f:
+    cfg = json.load(f)
+
+rules = cfg.get("route", {}).get("rules", [])
+if len(rules) < 3:
+    raise SystemExit("ASSERT FAIL: expected generated route rules from build-rules")
 PY
 
 ./fly pipeline

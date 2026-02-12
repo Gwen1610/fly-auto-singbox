@@ -90,3 +90,16 @@
 - 彩色输出仅在交互终端启用；当输出被重定向/管道时自动降级为纯文本，不影响脚本与测试解析。
 - 支持通过 `NO_COLOR=1` 手动关闭颜色。
 - markdown 收尾：为 `docs/plans/*` 增加 archive note，提示以 `README.md` 为当前行为准。
+
+## 2026-02-12 (integrate sing-box-geosite style rule conversion)
+- 新增独立命令 `./fly build-rules`，专门把 QX/Clash 规则源转换为 `config/route-rules.json`。
+- 新增配置模板 `config/rule-sources.example.json`，`./fly init` 会自动生成可编辑的 `config/rule-sources.json`。
+- 新增脚本 `scripts/build_route_rules.py`：
+  - 支持 `.list/.yaml/.txt`；
+  - 支持常见规则映射：`DOMAIN-SUFFIX/DOMAIN/DOMAIN-KEYWORD/IP-CIDR/...` 到 sing-box 对应字段；
+  - 输出格式为 `{final, rules}`，直接被 `build-config` 消费。
+- 转换模块保持解耦：仅生成 `route-rules.json`，不触碰节点提取或运行态命令。
+- 兼容性修复：
+  - 无 `requests` 时自动回退到 `urllib`；
+  - 无 `PyYAML` 时使用最小 `payload` 解析回退；
+  - 相对路径规则源支持 `sources 文件目录` 与 `当前工作目录` 双路径解析。

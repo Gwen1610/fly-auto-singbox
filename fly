@@ -10,6 +10,8 @@ ENV_FILE="${CONFIG_DIR}/fly.env"
 ENV_EXAMPLE_FILE="${CONFIG_DIR}/fly.env.example"
 PROVIDERS_FILE="${CONFIG_DIR}/extract.providers.json"
 PROVIDERS_EXAMPLE_FILE="${CONFIG_DIR}/extract.providers.example.json"
+RULE_SOURCES_FILE_DEFAULT="${CONFIG_DIR}/rule-sources.json"
+RULE_SOURCES_EXAMPLE_FILE="${CONFIG_DIR}/rule-sources.example.json"
 ROUTE_RULES_FILE_DEFAULT="${CONFIG_DIR}/route-rules.json"
 ROUTE_RULES_EXAMPLE_FILE="${CONFIG_DIR}/route-rules.example.json"
 
@@ -105,6 +107,7 @@ Usage:
   ./fly check-singbox
   ./fly install-singbox [--version v] [--os linux|darwin] [--arch amd64|arm64] [--install-dir dir] [--dry-run] [--force]
   ./fly install-guide
+  ./fly build-rules
   ./fly extract
   ./fly build-config
   ./fly pipeline
@@ -119,6 +122,7 @@ Command summary:
   check-singbox Show installed sing-box path and version
   install-singbox Auto download + install sing-box for linux/mac
   install-guide  Alias of install-singbox --dry-run
+  build-rules   Build config/route-rules.json from QX/Clash rule sources
   extract       Extract region nodes only (US/HK/SG/JP, no route rules)
   build-config  Build final config.json by injecting route rules into extracted nodes
   pipeline      Run extract + build-config
@@ -153,6 +157,7 @@ load_env() {
     SUDO_BIN="sudo"
   fi
   : "${EXTRACT_PROVIDERS_FILE:=./config/extract.providers.json}"
+  : "${RULE_SOURCES_FILE:=./config/rule-sources.json}"
   : "${NODES_FILE:=./build/nodes.json}"
   : "${ROUTE_RULES_FILE:=./config/route-rules.json}"
   : "${BASE_TEMPLATE_FILE:=./config/base-template.json}"
@@ -164,6 +169,7 @@ load_env() {
   : "${SINGBOX_RELEASES_API:=https://api.github.com/repos/SagerNet/sing-box/releases}"
 
   EXTRACT_PROVIDERS_FILE="$(abs_path "${EXTRACT_PROVIDERS_FILE}")"
+  RULE_SOURCES_FILE="$(abs_path "${RULE_SOURCES_FILE}")"
   NODES_FILE="$(abs_path "${NODES_FILE}")"
   ROUTE_RULES_FILE="$(abs_path "${ROUTE_RULES_FILE}")"
   BASE_TEMPLATE_FILE="$(abs_path "${BASE_TEMPLATE_FILE}")"
@@ -346,6 +352,9 @@ init_files() {
   if [[ ! -f "${PROVIDERS_EXAMPLE_FILE}" ]]; then
     die "missing template: ${PROVIDERS_EXAMPLE_FILE}"
   fi
+  if [[ ! -f "${RULE_SOURCES_EXAMPLE_FILE}" ]]; then
+    die "missing template: ${RULE_SOURCES_EXAMPLE_FILE}"
+  fi
   if [[ ! -f "${ROUTE_RULES_EXAMPLE_FILE}" ]]; then
     die "missing template: ${ROUTE_RULES_EXAMPLE_FILE}"
   fi
@@ -368,6 +377,16 @@ init_files() {
     log "generated ${PROVIDERS_FILE}"
   else
     log "exists ${PROVIDERS_FILE}, skip"
+  fi
+
+  if [[ ! -f "${RULE_SOURCES_FILE_DEFAULT}" ]] || is_true "${force}"; then
+    if [[ -f "${RULE_SOURCES_FILE_DEFAULT}" ]]; then
+      backup_existing_file "${RULE_SOURCES_FILE_DEFAULT}"
+    fi
+    cp "${RULE_SOURCES_EXAMPLE_FILE}" "${RULE_SOURCES_FILE_DEFAULT}"
+    log "generated ${RULE_SOURCES_FILE_DEFAULT}"
+  else
+    log "exists ${RULE_SOURCES_FILE_DEFAULT}, skip"
   fi
 
   if [[ ! -f "${ROUTE_RULES_FILE_DEFAULT}" ]] || is_true "${force}"; then
@@ -555,6 +574,18 @@ cmd_extract() {
   log "extracted nodes -> ${NODES_FILE}"
 }
 
+cmd_build_rules() {
+  load_env
+  need_cmd "${PYTHON_BIN}"
+  [[ -f "${RULE_SOURCES_FILE}" ]] || die "missing rule sources config: ${RULE_SOURCES_FILE}"
+
+  mkdir -p "$(dirname "${ROUTE_RULES_FILE}")"
+  "${PYTHON_BIN}" "${SCRIPTS_DIR}/build_route_rules.py" \
+    --sources-file "${RULE_SOURCES_FILE}" \
+    --output-file "${ROUTE_RULES_FILE}"
+  log "generated route rules -> ${ROUTE_RULES_FILE}"
+}
+
 cmd_build_config() {
   load_env
   need_cmd "${PYTHON_BIN}"
@@ -694,6 +725,7 @@ main() {
     check-singbox) cmd_check_singbox "$@" ;;
     install-singbox) cmd_install_singbox "$@" ;;
     install-guide) cmd_install_guide "$@" ;;
+    build-rules) cmd_build_rules "$@" ;;
     extract) cmd_extract "$@" ;;
     build-config) cmd_build_config "$@" ;;
     pipeline) cmd_pipeline "$@" ;;

@@ -58,3 +58,10 @@
 - [x] README 增补颜色说明与 `NO_COLOR=1` 用法。
 - [x] 整理 markdown：计划文档增加 archive note。
 - [x] 提交并 push 本轮“颜色输出 + markdown 收尾”改动。
+- [x] 新增计划文档 `docs/plans/2026-02-12-qx-route-rules-integration-design.md`。
+- [x] 集成 `build-rules` 解耦模块（`fly` + `scripts/build_route_rules.py`）。
+- [x] 新增 `config/rule-sources.example.json`，`init` 自动生成 `config/rule-sources.json`。
+- [x] 更新测试覆盖 `.list/.yaml/.txt` 转换链路，并验证被 `build-config` 消费。
+- [x] 修复无 `requests`/无 `PyYAML` 的运行回退。
+- [x] README 增加 `build-rules` 使用说明并补充 `sing-box-geosite` 署名。
+- [ ] 提交并 push 本轮“QX 规则转换模块集成”改动。

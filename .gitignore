@@ -2,8 +2,10 @@ build/
 state/
 config/fly.env
 config/extract.providers.json
+config/rule-sources.json
 config/route-rules.json
 *.log
 .sing-box.pid
 __pycache__/
 *.pyc
+.DS_Store

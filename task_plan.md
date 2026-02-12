@@ -8,7 +8,7 @@
 4) `fly install-singbox` 自动下载并安装 Linux/mac 对应版本（当前会话仅 dry-run 验证，不实际下载）。
 
 ## Current Phase
-Phase 12
+Phase 13
 
 ## Phases
 
@@ -91,9 +91,20 @@ Phase 12
 - [x] 提交并 push
 - **Status:** complete
 
+### Phase 13: Integrate QX Rule Conversion Module
+- [x] 研究 `sing-box-geosite` 规则映射逻辑并确定最小复用范围
+- [x] 新增独立模块 `build-rules`，仅负责生成 `config/route-rules.json`
+- [x] 增加 `config/rule-sources.example.json` 与 `init` 自动生成流程
+- [x] 测试覆盖 `.list/.yaml/.txt` 规则源到 route-rules 的转换与消费
+- [x] README 增加使用说明与 `sing-box-geosite` 署名
+- [ ] 提交并 push
+- **Status:** in_progress
+
 ## Errors Encountered
 | Error | Attempt | Resolution |
 |---|---|---|
 | 并行 shell 写文件被审批策略拒绝 | 1 | 改用 `apply_patch` 创建/更新文件 |
 | `SUDO_BIN=\"\"` 在加载默认值后被覆盖为 `sudo` | 1 | `load_env` 改为仅在变量未定义时才设置默认 sudo |
 | 并行执行验证命令时单条命令被审批策略拒绝 | 1 | 拆分为单独命令执行，通过后继续 |
+| `build_route_rules.py` 在最小测试环境缺少 `requests` | 1 | 增加 `urllib` 回退，不依赖第三方包也可运行 |
+| 本地规则源相对路径被解析到 `config/` 下导致找不到文件 | 1 | 相对路径优先按 sources 文件目录解析，若不存在再回退到工作目录 |
