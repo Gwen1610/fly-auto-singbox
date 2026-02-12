@@ -8,7 +8,7 @@
 4) `fly install-singbox` 自动下载并安装 Linux/mac 对应版本（当前会话仅 dry-run 验证，不实际下载）。
 
 ## Current Phase
-Phase 15
+Phase 16
 
 ## Phases
 
@@ -116,6 +116,16 @@ Phase 15
 - [x] 运行验证（`bash -n fly`、`bash tests/test_pipeline.sh`）
 - [x] 提交并 push
 - **Status:** complete
+
+### Phase 16: Hierarchical Group Strategy (Source -> Region -> Business)
+- [x] `extract` 保留订阅来源标识（`__provider_tag`）
+- [x] `build-config` 支持按来源+地区生成子组（如 `A-HongKong`、`B-HongKong`）
+- [x] 新增 `config/group-strategy.json`（来源默认、业务组、自定义 Proxy 成员）
+- [x] 支持业务组（如 `Streaming`/`AI`）引用地区组并设置默认值
+- [x] README 增加分组设计哲学与可配置示例
+- [x] 测试覆盖双订阅来源 + 分层组生成 + 默认选择器校验
+- [ ] 提交并 push
+- **Status:** in_progress
 
 ## Errors Encountered
 | Error | Attempt | Resolution |

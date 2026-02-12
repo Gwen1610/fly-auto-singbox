@@ -15,11 +15,12 @@ pip install -r requirements.txt
 ./fly init
 ```
 
-会生成四个你要编辑的文件：
+会生成五个你要编辑的文件：
 
 - `config/fly.env`
 - `config/extract.providers.json`
 - `config/rule-sources.json`（由 `config_template/rule-sources.example.json` 生成）
+- `config/group-strategy.json`（由 `config_template/group-strategy.example.json` 生成）
 - `config/route-rules.json`（由 `config_template/route-rules.example.json` 生成）
 
 ## 3. 先检查是否已安装 sing-box
@@ -87,6 +88,7 @@ sing-box version
 提示：
 
 - `subscribes[].enabled` 必须是 `true` 才会生效。
+- `subscribes[].tag` 建议明确写（例如 `A`、`B`），用于后续自动生成 `A-HongKong`、`B-HongKong` 这类来源分组。
 - `subscribes[].url` 是订阅链接时应为 `http/https`，程序会先下载再解析。
 - 如果节点名称里没有地区标识（US/HK/SG/JP 或对应中文/常见缩写），提取会失败。
 
@@ -160,6 +162,7 @@ sing-box version
 输入规则文件：
 
 - `config/route-rules.json`（默认由 `config_template/route-rules.example.json` 生成）
+- `config/group-strategy.json`（默认由 `config_template/group-strategy.example.json` 生成）
 
 默认内容：
 
@@ -178,7 +181,49 @@ sing-box version
 ./fly pipeline
 ```
 
-## 9. 启停与日志
+## 9. 分组设计哲学（分层选择器）
+
+`build-config` 会按下面四层生成 outbounds 选择器：
+
+1. 来源+地区层  
+例如你有两个订阅 `A` 和 `B`，会生成 `A-HongKong`、`B-HongKong`、`A-America` 等组，每组只包含该来源该地区节点。
+
+2. 地区聚合层  
+例如 `HongKong` 组会包含 `A-HongKong`、`B-HongKong`，默认值由 `group-strategy` 里的 `region_defaults` 决定（例如默认 `A-HongKong`）。
+
+3. 业务分组层  
+你可以在 `group-strategy` 的 `custom_groups` 自定义，例如 `Streaming`、`AI`，成员可引用地区组（如 `HongKong`、`America`）或其他已存在组。
+
+4. 顶层 `Proxy`  
+`Proxy` 的成员和默认值由 `group-strategy.proxy` 控制。你可以把 `Streaming`、`AI`、地区组混合放入。
+
+示例（`config/group-strategy.json`）：
+
+```json
+{
+  "region_defaults": {
+    "HongKong": "A"
+  },
+  "custom_groups": [
+    {
+      "tag": "Streaming",
+      "members": ["HongKong", "America"],
+      "default": "HongKong"
+    },
+    {
+      "tag": "AI",
+      "members": ["HongKong", "America"],
+      "default": "HongKong"
+    }
+  ],
+  "proxy": {
+    "members": ["Streaming", "AI", "HongKong", "America", "Singapore", "Japan"],
+    "default": "HongKong"
+  }
+}
+```
+
+## 10. 启停与日志
 
 启动：
 
@@ -213,7 +258,7 @@ sing-box version
   - 非交互场景（管道、重定向、脚本捕获）自动关闭颜色，不影响解析。
   - 如需手动关闭颜色：`NO_COLOR=1 ./fly <command>`
 
-## 10. 配置文件作用
+## 11. 配置文件作用
 
 - `config/base-template.json`
   - `build-config` 的唯一主模板，定义 inbounds/dns/route 基础结构。
@@ -222,18 +267,22 @@ sing-box version
   - QX/Clash 规则源配置模板。
   - `./fly init` 会复制为 `config/rule-sources.json` 供你编辑。
   - `./fly build-rules` 读取这个文件生成 `config/route-rules.json`。
+- `config_template/group-strategy.example.json`
+  - 分层分组策略模板（来源组、地区组、业务组、Proxy 顶层）。
+  - `./fly init` 会复制为 `config/group-strategy.json` 供你编辑。
+  - `./fly build-config` 会读取这个文件来生成 selector 结构。
 - `config_template/route-rules.example.json`
   - 分流规则参考模板。
   - `./fly init` 会复制为 `config/route-rules.json` 供你编辑。
   - 默认是空规则，不包含任何预置分流策略。
 
-## 11. 测试
+## 12. 测试
 
 ```bash
 bash tests/test_pipeline.sh
 ```
 
-## 12. 署名
+## 13. 署名
 
 - 内置节点提取器代码来自开源项目 `sing-box-subscribe`。
 - 原作者：`Toperlock`（仓库：`https://github.com/Toperlock/sing-box-subscribe`）。

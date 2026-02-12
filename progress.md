@@ -76,3 +76,11 @@
 - [x] 更新 README 中 `.example` 路径说明。
 - [x] 完成验证（`bash -n fly`、`bash tests/test_pipeline.sh`）。
 - [x] 提交并 push 本轮“模板目录统一”改动。
+- [x] `extract` 注入 `__provider_tag`，用于来源分组。
+- [x] `build-config` 接入 `group-strategy`，支持来源组/地区组/业务组/Proxy 四层选择器。
+- [x] 新增 `config_template/group-strategy.example.json`。
+- [x] `fly init` 新增 `group-strategy.json` 生成；`build-config` 强制读取该文件。
+- [x] README 补充分组设计哲学和配置示例。
+- [x] 更新测试覆盖 `A/B` 双订阅来源与 `Streaming/AI` 分组。
+- [x] 完成验证（`bash -n fly`、`conda run -n yellow python -m py_compile ...`、`bash tests/test_pipeline.sh`）。
+- [ ] 提交并 push 本轮“分层分组策略”改动。

@@ -38,27 +38,75 @@ cd "${WORK_DIR}/repo"
 assert_file_exists "./config/fly.env"
 assert_file_exists "./config/extract.providers.json"
 assert_file_exists "./config/rule-sources.json"
+assert_file_exists "./config/group-strategy.json"
 assert_file_exists "./config/route-rules.json"
 assert_file_exists "./config/base-template.json"
 
 mkdir -p "./build" "./bin"
-cat > "./build/subscription.txt" <<'EOF'
-ss://YWVzLTEyOC1nY206cGFzcw==@1.1.1.1:443#US-01
-ss://YWVzLTEyOC1nY206cGFzcw==@2.2.2.2:443#香港-01
-ss://YWVzLTEyOC1nY206cGFzcw==@3.3.3.3:443#JP-01
-ss://YWVzLTEyOC1nY206cGFzcw==@4.4.4.4:443#Singapore-01
+cat > "./build/subscription_a.txt" <<'EOF'
+ss://YWVzLTEyOC1nY206cGFzcw==@1.1.1.1:443#A-US-01
+ss://YWVzLTEyOC1nY206cGFzcw==@2.2.2.2:443#A-HK-01
+ss://YWVzLTEyOC1nY206cGFzcw==@3.3.3.3:443#A-JP-01
+EOF
+cat > "./build/subscription_b.txt" <<'EOF'
+ss://YWVzLTEyOC1nY206cGFzcw==@4.4.4.4:443#B-US-01
+ss://YWVzLTEyOC1nY206cGFzcw==@5.5.5.5:443#B-HK-01
+ss://YWVzLTEyOC1nY206cGFzcw==@6.6.6.6:443#B-SG-01
 EOF
 cat > "./config/extract.providers.json" <<'JSON'
 {
   "subscribes": [
     {
-      "tag": "local",
+      "tag": "A",
       "enabled": true,
-      "url": "./build/subscription.txt",
+      "url": "./build/subscription_a.txt",
+      "prefix": "",
+      "emoji": 0
+    },
+    {
+      "tag": "B",
+      "enabled": true,
+      "url": "./build/subscription_b.txt",
       "prefix": "",
       "emoji": 0
     }
   ]
+}
+JSON
+cat > "./config/group-strategy.json" <<'JSON'
+{
+  "region_defaults": {
+    "HongKong": "A"
+  },
+  "custom_groups": [
+    {
+      "tag": "Streaming",
+      "members": [
+        "HongKong",
+        "America"
+      ],
+      "default": "HongKong"
+    },
+    {
+      "tag": "AI",
+      "members": [
+        "HongKong",
+        "America"
+      ],
+      "default": "HongKong"
+    }
+  ],
+  "proxy": {
+    "members": [
+      "Streaming",
+      "AI",
+      "HongKong",
+      "America",
+      "Singapore",
+      "Japan"
+    ],
+    "default": "HongKong"
+  }
 }
 JSON
 
@@ -86,6 +134,7 @@ SING_BOX_BIN="./bin/sing-box"
 SUDO_BIN=""
 EXTRACT_PROVIDERS_FILE="./config/extract.providers.json"
 RULE_SOURCES_FILE="./config/rule-sources.json"
+GROUP_STRATEGY_FILE="./config/group-strategy.json"
 NODES_FILE="./build/nodes.json"
 ROUTE_RULES_FILE="./config/route-rules.json"
 BASE_TEMPLATE_FILE="./config/base-template.json"
@@ -98,16 +147,20 @@ EOF
 
 ./fly extract
 assert_file_exists "./build/nodes.json"
-assert_contains '"tag": "US-01"' "./build/nodes.json"
-assert_contains '"tag": "香港-01"' "./build/nodes.json"
-assert_contains '"tag": "JP-01"' "./build/nodes.json"
-assert_contains '"tag": "Singapore-01"' "./build/nodes.json"
+assert_contains '"tag": "A-US-01"' "./build/nodes.json"
+assert_contains '"tag": "A-HK-01"' "./build/nodes.json"
+assert_contains '"tag": "A-JP-01"' "./build/nodes.json"
+assert_contains '"tag": "B-SG-01"' "./build/nodes.json"
 
 ./fly build-config
 assert_file_exists "./config.json"
 assert_contains '"tag": "Proxy"' "./config.json"
 assert_contains '"tag": "America"' "./config.json"
 assert_contains '"tag": "HongKong"' "./config.json"
+assert_contains '"tag": "A-HongKong"' "./config.json"
+assert_contains '"tag": "B-HongKong"' "./config.json"
+assert_contains '"tag": "Streaming"' "./config.json"
+assert_contains '"tag": "AI"' "./config.json"
 assert_not_contains 'geosite' "./config.json"
 assert_not_contains 'geoip' "./config.json"
 python3 - <<'PY'
@@ -125,6 +178,19 @@ if not isinstance(rules, list):
     raise SystemExit("ASSERT FAIL: route.rules is not array")
 if len(rules) != 0:
     raise SystemExit("ASSERT FAIL: expected route.rules to be empty by default")
+
+outbounds = cfg.get("outbounds", [])
+mapping = {item.get("tag"): item for item in outbounds if isinstance(item, dict)}
+hk = mapping.get("HongKong", {})
+if hk.get("default") != "A-HongKong":
+    raise SystemExit("ASSERT FAIL: HongKong default should be A-HongKong")
+if "A-HongKong" not in hk.get("outbounds", []) or "B-HongKong" not in hk.get("outbounds", []):
+    raise SystemExit("ASSERT FAIL: HongKong should include A-HongKong and B-HongKong")
+proxy = mapping.get("Proxy", {})
+if proxy.get("default") != "HongKong":
+    raise SystemExit("ASSERT FAIL: Proxy default should follow group strategy default HongKong")
+if "Streaming" not in proxy.get("outbounds", []) or "AI" not in proxy.get("outbounds", []):
+    raise SystemExit("ASSERT FAIL: Proxy should include custom groups Streaming/AI")
 PY
 
 cat > "./build/qx-openai.list" <<'EOF'

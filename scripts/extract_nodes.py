@@ -342,6 +342,9 @@ def process_subscribes(subscribes):
         subgroup = str(subscribe.get("subgroup", "")).strip()
         if subgroup:
             tag = f"{tag}-{subgroup}-subgroup"
+        for item in nodes:
+            # keep source tag for layered selector building in build_config
+            item["__provider_tag"] = tag
         grouped.setdefault(tag, []).extend(nodes)
 
     tool.proDuplicateNodeName(grouped)

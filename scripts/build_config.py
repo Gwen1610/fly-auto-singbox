@@ -35,6 +35,18 @@ REGION_PATTERNS = OrderedDict(
     ]
 )
 
+REGION_ALIASES = {
+    "america": "America",
+    "us": "America",
+    "usa": "America",
+    "hongkong": "HongKong",
+    "hk": "HongKong",
+    "singapore": "Singapore",
+    "sg": "Singapore",
+    "japan": "Japan",
+    "jp": "Japan",
+}
+
 OUTBOUND_ALIAS = {
     "proxy": "Proxy",
     "america": "America",
@@ -98,6 +110,16 @@ def validate_nodes(nodes):
             raise RuntimeError(f"nodes[{index}] missing tag")
 
 
+def normalize_region_name(raw):
+    value = str(raw).strip()
+    if not value:
+        return value
+    compact = re.sub(r"[^a-z]", "", value.lower())
+    if compact in REGION_ALIASES:
+        return REGION_ALIASES[compact]
+    return value
+
+
 def detect_region(tag):
     for region, pattern in REGION_PATTERNS.items():
         if pattern.search(tag):
@@ -105,38 +127,19 @@ def detect_region(tag):
     return None
 
 
-def group_nodes(nodes):
-    grouped = OrderedDict((name, []) for name in REGION_PATTERNS.keys())
+def group_nodes_by_region_and_provider(nodes):
+    grouped = OrderedDict((region, OrderedDict()) for region in REGION_PATTERNS.keys())
+    total = 0
     for node in nodes:
         region = detect_region(node.get("tag", ""))
-        if region:
-            grouped[region].append(node)
-    total = sum(len(items) for items in grouped.values())
+        if not region:
+            continue
+        provider = str(node.get("__provider_tag", "default")).strip() or "default"
+        grouped[region].setdefault(provider, []).append(node)
+        total += 1
     if total == 0:
         raise RuntimeError("no America/HongKong/Singapore/Japan nodes found")
     return grouped
-
-
-def build_outbounds(grouped):
-    outbounds = [
-        {
-            "tag": "Proxy",
-            "type": "selector",
-            "outbounds": ["America", "HongKong", "Singapore", "Japan"],
-            "default": "America",
-        }
-    ]
-    for region in ("America", "HongKong", "Singapore", "Japan"):
-        members = [item["tag"] for item in grouped.get(region, [])]
-        if not members:
-            members = ["direct"]
-        outbounds.append({"tag": region, "type": "selector", "outbounds": members})
-    outbounds.append({"type": "direct", "tag": "direct"})
-    outbounds.append({"type": "block", "tag": "block"})
-
-    for region in grouped:
-        outbounds.extend(grouped[region])
-    return outbounds
 
 
 def normalize_outbound(raw):
@@ -146,6 +149,199 @@ def normalize_outbound(raw):
     if not value:
         return value
     return OUTBOUND_ALIAS.get(value.lower(), value)
+
+
+def strip_internal_fields(node):
+    output = {}
+    for key, value in node.items():
+        if str(key).startswith("__"):
+            continue
+        output[key] = value
+    return output
+
+
+def make_provider_region_tag(provider, region):
+    return f"{provider}-{region}"
+
+
+def resolve_selector_member(raw, available_tags):
+    if not isinstance(raw, str):
+        return ""
+    value = raw.strip()
+    if not value:
+        return ""
+
+    normalized_region = normalize_region_name(value)
+    if normalized_region in available_tags:
+        return normalized_region
+    if value in available_tags:
+        return value
+    for tag in available_tags:
+        if str(tag).lower() == value.lower():
+            return tag
+    return ""
+
+
+def resolve_region_default(region, members, preferred):
+    if not members:
+        return "direct"
+    if not preferred:
+        return members[0]
+
+    pref = str(preferred).strip()
+    if not pref:
+        return members[0]
+    if pref in members:
+        return pref
+
+    candidate = make_provider_region_tag(pref, region)
+    if candidate in members:
+        return candidate
+
+    for item in members:
+        if item.lower() == pref.lower() or item.lower() == candidate.lower():
+            return item
+    return members[0]
+
+
+def load_group_strategy(path: Path):
+    cfg = load_json(path)
+    if not isinstance(cfg, dict):
+        raise RuntimeError("group strategy file must be a JSON object")
+
+    region_defaults_raw = cfg.get("region_defaults", {})
+    custom_groups_raw = cfg.get("custom_groups", [])
+    proxy_raw = cfg.get("proxy", {})
+
+    if not isinstance(region_defaults_raw, dict):
+        raise RuntimeError("group strategy region_defaults must be object")
+    if not isinstance(custom_groups_raw, list):
+        raise RuntimeError("group strategy custom_groups must be array")
+    if not isinstance(proxy_raw, dict):
+        raise RuntimeError("group strategy proxy must be object")
+
+    region_defaults = {}
+    for key, value in region_defaults_raw.items():
+        region_key = normalize_region_name(key)
+        region_defaults[region_key] = str(value).strip()
+
+    custom_groups = []
+    for index, item in enumerate(custom_groups_raw):
+        if not isinstance(item, dict):
+            raise RuntimeError(f"custom_groups[{index}] must be object")
+        tag = str(item.get("tag", "")).strip()
+        members = item.get("members", [])
+        default = str(item.get("default", "")).strip()
+        if not tag:
+            raise RuntimeError(f"custom_groups[{index}].tag must be non-empty string")
+        if not isinstance(members, list):
+            raise RuntimeError(f"custom_groups[{index}].members must be array")
+        custom_groups.append({"tag": tag, "members": members, "default": default})
+
+    proxy_members = proxy_raw.get("members", list(REGION_PATTERNS.keys()))
+    proxy_default = str(proxy_raw.get("default", "Proxy")).strip()
+    if not isinstance(proxy_members, list):
+        raise RuntimeError("group strategy proxy.members must be array")
+
+    return {
+        "region_defaults": region_defaults,
+        "custom_groups": custom_groups,
+        "proxy": {"members": proxy_members, "default": proxy_default},
+    }
+
+
+def build_outbounds(grouped, strategy):
+    selectors = []
+    node_outbounds = []
+    available_selector_tags = set()
+    region_tags = []
+    custom_tags = []
+
+    for region in REGION_PATTERNS.keys():
+        provider_groups = []
+        for provider, nodes in grouped[region].items():
+            node_tags = [item.get("tag") for item in nodes if isinstance(item.get("tag"), str)]
+            if not node_tags:
+                continue
+
+            source_region_tag = make_provider_region_tag(provider, region)
+            selectors.append(
+                {
+                    "tag": source_region_tag,
+                    "type": "selector",
+                    "outbounds": node_tags,
+                    "default": node_tags[0],
+                }
+            )
+            available_selector_tags.add(source_region_tag)
+            provider_groups.append(source_region_tag)
+            node_outbounds.extend(strip_internal_fields(node) for node in nodes)
+
+        if provider_groups:
+            region_default = resolve_region_default(
+                region,
+                provider_groups,
+                strategy["region_defaults"].get(region, ""),
+            )
+            members = provider_groups
+        else:
+            region_default = "direct"
+            members = ["direct"]
+
+        selectors.append(
+            {"tag": region, "type": "selector", "outbounds": members, "default": region_default}
+        )
+        available_selector_tags.add(region)
+        region_tags.append(region)
+
+    for group in strategy["custom_groups"]:
+        members = []
+        for raw_member in group["members"]:
+            resolved = resolve_selector_member(raw_member, available_selector_tags)
+            if resolved and resolved not in members:
+                members.append(resolved)
+        if not members:
+            continue
+
+        default_member = resolve_selector_member(group["default"], set(members))
+        if not default_member:
+            default_member = members[0]
+        selectors.append(
+            {
+                "tag": group["tag"],
+                "type": "selector",
+                "outbounds": members,
+                "default": default_member,
+            }
+        )
+        available_selector_tags.add(group["tag"])
+        custom_tags.append(group["tag"])
+
+    proxy_members = []
+    for raw_member in strategy["proxy"]["members"]:
+        resolved = resolve_selector_member(raw_member, available_selector_tags)
+        if resolved and resolved not in proxy_members:
+            proxy_members.append(resolved)
+    if not proxy_members:
+        proxy_members = [*region_tags, *custom_tags] or ["direct"]
+
+    proxy_default = resolve_selector_member(strategy["proxy"]["default"], set(proxy_members))
+    if not proxy_default:
+        proxy_default = proxy_members[0]
+
+    outbounds = [
+        {
+            "tag": "Proxy",
+            "type": "selector",
+            "outbounds": proxy_members,
+            "default": proxy_default,
+        },
+        *selectors,
+        {"type": "direct", "tag": "direct"},
+        {"type": "block", "tag": "block"},
+        *node_outbounds,
+    ]
+    return outbounds
 
 
 def ensure_legacy_geoip_compat(rule):
@@ -241,9 +437,10 @@ def build_config(base_template, outbounds, final_outbound, rules):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Build final sing-box config from nodes + rules")
+    parser = argparse.ArgumentParser(description="Build final sing-box config from nodes + rules + groups")
     parser.add_argument("--nodes-file", required=True)
     parser.add_argument("--rules-file", required=True)
+    parser.add_argument("--groups-file", required=True)
     parser.add_argument("--template-file", required=True)
     parser.add_argument("--output-file", required=True)
     args = parser.parse_args()
@@ -252,8 +449,9 @@ def main():
     validate_nodes(nodes)
     nodes = dedupe_nodes(nodes)
 
-    grouped = group_nodes(nodes)
-    outbounds = build_outbounds(grouped)
+    grouped = group_nodes_by_region_and_provider(nodes)
+    groups_cfg = load_group_strategy(Path(args.groups_file).resolve())
+    outbounds = build_outbounds(grouped, groups_cfg)
     outbound_tags = {item.get("tag") for item in outbounds if isinstance(item, dict)}
 
     rules_cfg = load_json(Path(args.rules_file).resolve())
@@ -263,7 +461,7 @@ def main():
     config = build_config(base_template, outbounds, final_outbound, rules)
     save_json(Path(args.output_file).resolve(), config)
 
-    region_counts = {k: len(v) for k, v in grouped.items()}
+    region_counts = {region: sum(len(items) for items in grouped[region].values()) for region in grouped}
     print(f"region counts: {region_counts}")
     print(f"saved config: {Path(args.output_file).resolve()}")
 

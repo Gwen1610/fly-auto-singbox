@@ -13,6 +13,8 @@ PROVIDERS_FILE="${CONFIG_DIR}/extract.providers.json"
 PROVIDERS_EXAMPLE_FILE="${TEMPLATE_DIR}/extract.providers.example.json"
 RULE_SOURCES_FILE_DEFAULT="${CONFIG_DIR}/rule-sources.json"
 RULE_SOURCES_EXAMPLE_FILE="${TEMPLATE_DIR}/rule-sources.example.json"
+GROUP_STRATEGY_FILE_DEFAULT="${CONFIG_DIR}/group-strategy.json"
+GROUP_STRATEGY_EXAMPLE_FILE="${TEMPLATE_DIR}/group-strategy.example.json"
 ROUTE_RULES_FILE_DEFAULT="${CONFIG_DIR}/route-rules.json"
 ROUTE_RULES_EXAMPLE_FILE="${TEMPLATE_DIR}/route-rules.example.json"
 
@@ -159,6 +161,7 @@ load_env() {
   fi
   : "${EXTRACT_PROVIDERS_FILE:=./config/extract.providers.json}"
   : "${RULE_SOURCES_FILE:=./config/rule-sources.json}"
+  : "${GROUP_STRATEGY_FILE:=./config/group-strategy.json}"
   : "${NODES_FILE:=./build/nodes.json}"
   : "${ROUTE_RULES_FILE:=./config/route-rules.json}"
   : "${BASE_TEMPLATE_FILE:=./config/base-template.json}"
@@ -171,6 +174,7 @@ load_env() {
 
   EXTRACT_PROVIDERS_FILE="$(abs_path "${EXTRACT_PROVIDERS_FILE}")"
   RULE_SOURCES_FILE="$(abs_path "${RULE_SOURCES_FILE}")"
+  GROUP_STRATEGY_FILE="$(abs_path "${GROUP_STRATEGY_FILE}")"
   NODES_FILE="$(abs_path "${NODES_FILE}")"
   ROUTE_RULES_FILE="$(abs_path "${ROUTE_RULES_FILE}")"
   BASE_TEMPLATE_FILE="$(abs_path "${BASE_TEMPLATE_FILE}")"
@@ -356,6 +360,9 @@ init_files() {
   if [[ ! -f "${RULE_SOURCES_EXAMPLE_FILE}" ]]; then
     die "missing template: ${RULE_SOURCES_EXAMPLE_FILE}"
   fi
+  if [[ ! -f "${GROUP_STRATEGY_EXAMPLE_FILE}" ]]; then
+    die "missing template: ${GROUP_STRATEGY_EXAMPLE_FILE}"
+  fi
   if [[ ! -f "${ROUTE_RULES_EXAMPLE_FILE}" ]]; then
     die "missing template: ${ROUTE_RULES_EXAMPLE_FILE}"
   fi
@@ -388,6 +395,16 @@ init_files() {
     log "generated ${RULE_SOURCES_FILE_DEFAULT}"
   else
     log "exists ${RULE_SOURCES_FILE_DEFAULT}, skip"
+  fi
+
+  if [[ ! -f "${GROUP_STRATEGY_FILE_DEFAULT}" ]] || is_true "${force}"; then
+    if [[ -f "${GROUP_STRATEGY_FILE_DEFAULT}" ]]; then
+      backup_existing_file "${GROUP_STRATEGY_FILE_DEFAULT}"
+    fi
+    cp "${GROUP_STRATEGY_EXAMPLE_FILE}" "${GROUP_STRATEGY_FILE_DEFAULT}"
+    log "generated ${GROUP_STRATEGY_FILE_DEFAULT}"
+  else
+    log "exists ${GROUP_STRATEGY_FILE_DEFAULT}, skip"
   fi
 
   if [[ ! -f "${ROUTE_RULES_FILE_DEFAULT}" ]] || is_true "${force}"; then
@@ -592,11 +609,13 @@ cmd_build_config() {
   need_cmd "${PYTHON_BIN}"
   [[ -f "${NODES_FILE}" ]] || die "missing nodes file: ${NODES_FILE} (run ./fly extract first)"
   [[ -f "${ROUTE_RULES_FILE}" ]] || die "missing route rules file: ${ROUTE_RULES_FILE}"
+  [[ -f "${GROUP_STRATEGY_FILE}" ]] || die "missing group strategy file: ${GROUP_STRATEGY_FILE}"
   [[ -f "${BASE_TEMPLATE_FILE}" ]] || die "missing base template: ${BASE_TEMPLATE_FILE}"
 
   "${PYTHON_BIN}" "${SCRIPTS_DIR}/build_config.py" \
     --nodes-file "${NODES_FILE}" \
     --rules-file "${ROUTE_RULES_FILE}" \
+    --groups-file "${GROUP_STRATEGY_FILE}" \
     --template-file "${BASE_TEMPLATE_FILE}" \
     --output-file "${CONFIG_JSON}"
   log "generated config -> ${CONFIG_JSON}"

@@ -121,3 +121,17 @@
   - `route-rules.example.json`
 - `fly init` 已改为从 `config_template/` 复制生成运行时文件到 `config/`。
 - README 已同步改为 `config_template/*.example` 路径说明。
+
+## 2026-02-12 (hierarchical grouping strategy)
+- 分组模型已升级为四层：
+  1) 来源+地区（`A-HongKong`/`B-HongKong`）；
+  2) 地区聚合（`HongKong` 包含来源子组）；
+  3) 业务组（`Streaming`/`AI` 等）；
+  4) 顶层 `Proxy`。
+- `extract_nodes.py` 现在会在节点中保留 `__provider_tag`，作为来源分组依据。
+- `build_config.py` 新增 `--groups-file`，读取 `config/group-strategy.json` 来决定：
+  - 各地区默认来源（如 `HongKong -> A`）；
+  - 业务组成员与默认值；
+  - 顶层 `Proxy` 成员与默认值。
+- 新增模板：`config_template/group-strategy.example.json`。
+- `fly init` 与 `fly.env` 已接入 `GROUP_STRATEGY_FILE`，`build-config` 执行时强制校验该文件存在。

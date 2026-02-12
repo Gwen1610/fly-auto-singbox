@@ -3,6 +3,7 @@ state/
 config/fly.env
 config/extract.providers.json
 config/rule-sources.json
+config/group-strategy.json
 config/route-rules.json
 *.log
 .sing-box.pid

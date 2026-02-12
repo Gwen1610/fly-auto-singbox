@@ -1,0 +1,34 @@
+{
+  "region_defaults": {
+    "HongKong": "A"
+  },
+  "custom_groups": [
+    {
+      "tag": "Streaming",
+      "members": [
+        "HongKong",
+        "America"
+      ],
+      "default": "HongKong"
+    },
+    {
+      "tag": "AI",
+      "members": [
+        "HongKong",
+        "America"
+      ],
+      "default": "HongKong"
+    }
+  ],
+  "proxy": {
+    "members": [
+      "Streaming",
+      "AI",
+      "HongKong",
+      "America",
+      "Singapore",
+      "Japan"
+    ],
+    "default": "HongKong"
+  }
+}
