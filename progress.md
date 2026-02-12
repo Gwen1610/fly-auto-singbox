@@ -48,4 +48,4 @@
 - [x] README 增加 `base-template/minimal_four_regions/route-rules.example` 作用说明。
 - [x] 更新 `tests/test_pipeline.sh` 默认路由断言（`route.rules` 为空）。
 - [x] 完成验证（`bash -n fly`、`conda run -n yellow python -m py_compile ...`、`bash tests/test_pipeline.sh`）。
-- [ ] 提交并 push 本轮“route-rules 模板化 + 默认无分流”改动。
+- [x] 提交并 push 本轮“route-rules 模板化 + 默认无分流”改动。

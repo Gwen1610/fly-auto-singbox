@@ -73,8 +73,8 @@ Phase 10
 - [x] `./fly init` 默认生成 `config/route-rules.json`（无分流，`final=Proxy`）
 - [x] README 补充 `base-template` / `minimal_four_regions` / `route-rules.example` 作用说明
 - [x] 更新测试断言，默认校验 `route.rules=[]`
-- [ ] 提交并 push
-- **Status:** in_progress
+- [x] 提交并 push
+- **Status:** complete
 
 ## Errors Encountered
 | Error | Attempt | Resolution |
