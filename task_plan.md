@@ -1,14 +1,14 @@
-# Task Plan: 解耦 Pipeline + 自动安装
+# Task Plan: 解耦 Pipeline + 自动安装 + 内置提取器
 
 ## Goal
-在 `fly-auto-singbox` 中实现三段解耦，并新增自动安装能力：
+在 `fly-auto-singbox` 中实现三段解耦，并新增自动安装能力与内置订阅提取能力：
 1) 手动安装指导（保留原下载方式，但不自动安装）；
-2) 基于 `sing-box-subscribe` 的节点提取（不含分流）+ 分流构建（独立模块）；
+2) 节点提取（不含分流）+ 分流构建（独立模块）；
 3) `fly on/off/status/log` 后台进程管理。
 4) `fly install-singbox` 自动下载并安装 Linux/mac 对应版本（当前会话仅 dry-run 验证，不实际下载）。
 
 ## Current Phase
-Phase 6
+Phase 7
 
 ## Phases
 
@@ -46,6 +46,13 @@ Phase 6
 - [x] 更新测试与 README
 - [x] 验证并 push
 - **Status:** complete
+
+### Phase 7: Internalize Subscription Extractor
+- [x] 内置解析器代码到本仓库
+- [x] 去除 `extract` 对外部目录依赖
+- [x] 更新 README 必要信息与测试
+- [ ] 提交并 push
+- **Status:** in_progress
 
 ## Errors Encountered
 | Error | Attempt | Resolution |

@@ -31,30 +31,26 @@ assert_file_exists "./config/extract.providers.json"
 assert_file_exists "./config/route-rules.json"
 assert_file_exists "./config/base-template.json"
 
-mkdir -p "./mock-subscribe" "./bin"
-cat > "./mock-subscribe/main.py" <<'PY'
-#!/usr/bin/env python3
-import argparse
-import json
-from pathlib import Path
-
-parser = argparse.ArgumentParser()
-parser.add_argument("--temp_json_data", required=True)
-args = parser.parse_args()
-
-payload = json.loads(args.temp_json_data)
-output = Path(payload["save_config_path"])
-output.parent.mkdir(parents=True, exist_ok=True)
-nodes = [
-    {"type": "shadowsocks", "tag": "US-01", "server": "1.1.1.1", "server_port": 443, "method": "aes-128-gcm", "password": "x"},
-    {"type": "shadowsocks", "tag": "香港-01", "server": "2.2.2.2", "server_port": 443, "method": "aes-128-gcm", "password": "x"},
-    {"type": "shadowsocks", "tag": "JP-01", "server": "3.3.3.3", "server_port": 443, "method": "aes-128-gcm", "password": "x"},
-    {"type": "shadowsocks", "tag": "Singapore-01", "server": "4.4.4.4", "server_port": 443, "method": "aes-128-gcm", "password": "x"}
-]
-output.write_text(json.dumps(nodes, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-print(f"mock saved: {output}")
-PY
-chmod +x "./mock-subscribe/main.py"
+mkdir -p "./build" "./bin"
+cat > "./build/subscription.txt" <<'EOF'
+ss://YWVzLTEyOC1nY206cGFzcw==@1.1.1.1:443#US-01
+ss://YWVzLTEyOC1nY206cGFzcw==@2.2.2.2:443#香港-01
+ss://YWVzLTEyOC1nY206cGFzcw==@3.3.3.3:443#JP-01
+ss://YWVzLTEyOC1nY206cGFzcw==@4.4.4.4:443#Singapore-01
+EOF
+cat > "./config/extract.providers.json" <<'JSON'
+{
+  "subscribes": [
+    {
+      "tag": "local",
+      "enabled": true,
+      "url": "./build/subscription.txt",
+      "prefix": "",
+      "emoji": 0
+    }
+  ]
+}
+JSON
 
 cat > "./bin/sing-box" <<'SH'
 #!/usr/bin/env bash
@@ -75,7 +71,6 @@ SH
 chmod +x "./bin/sing-box"
 
 cat > "./config/fly.env" <<EOF
-SUBSCRIBE_DIR="./mock-subscribe"
 PYTHON_BIN="python3"
 SING_BOX_BIN="./bin/sing-box"
 SUDO_BIN=""

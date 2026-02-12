@@ -1,13 +1,12 @@
 {
-  "config_template": "config_template/minimal_four_regions.json",
   "subscribes": [
     {
       "tag": "default",
       "enabled": false,
-      "url": "https://example.com/subscription",
+      "url": "https://example.com/subscription-or-local-file",
       "prefix": "",
-      "emoji": 0
+      "emoji": 0,
+      "ex-node-name": ""
     }
-  ],
-  "save_config_path": "./nodes.json"
+  ]
 }

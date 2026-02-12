@@ -23,3 +23,9 @@
 - [x] 更新 `tests/test_pipeline.sh`：新增 mock releases + dry-run 安装断言。
 - [x] 完成验证（语法、测试、Python 编译）。
 - [x] 提交并 push 本轮变更。
+- [x] 新增 `scripts/internal_subscribe/` 内置提取器实现（含 parsers + tool）。
+- [x] 重写 `scripts/extract_nodes.py` 为本仓库内实现，不再调用外部目录。
+- [x] 更新 `config/extract.providers.example.json` 与 `requirements.txt`。
+- [x] 重写 README，补充安装校验、订阅填写位置、输出文件位置。
+- [x] 跑全量验证（`bash -n fly`、`python3 -m py_compile ...`、`bash tests/test_pipeline.sh`）。
+- [ ] push 本轮“内置提取器”改动。

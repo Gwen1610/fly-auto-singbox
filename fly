@@ -65,7 +65,7 @@ Command summary:
   init          Create local runtime config files from templates
   install-singbox Auto download + install sing-box for linux/mac
   install-guide  Alias of install-singbox --dry-run
-  extract       Use sing-box-subscribe to extract region nodes only (no route rules)
+  extract       Extract region nodes only (US/HK/SG/JP, no route rules)
   build-config  Build final config.json by injecting route rules into extracted nodes
   pipeline      Run extract + build-config
   on            Start sing-box in background (nohup + PID file)
@@ -93,7 +93,6 @@ load_env() {
     warn "missing ${ENV_FILE}; using built-in defaults (run ./fly init to generate files)"
   fi
 
-  : "${SUBSCRIBE_DIR:=../sing-box-subscribe}"
   : "${PYTHON_BIN:=python3}"
   : "${SING_BOX_BIN:=sing-box}"
   if [[ -z "${SUDO_BIN+x}" ]]; then
@@ -110,7 +109,6 @@ load_env() {
   : "${SINGBOX_INSTALL_DIR:=/usr/local/bin}"
   : "${SINGBOX_RELEASES_API:=https://api.github.com/repos/SagerNet/sing-box/releases}"
 
-  SUBSCRIBE_DIR="$(abs_path "${SUBSCRIBE_DIR}")"
   EXTRACT_PROVIDERS_FILE="$(abs_path "${EXTRACT_PROVIDERS_FILE}")"
   NODES_FILE="$(abs_path "${NODES_FILE}")"
   ROUTE_RULES_FILE="$(abs_path "${ROUTE_RULES_FILE}")"
@@ -381,13 +379,10 @@ cmd_install_guide() {
 cmd_extract() {
   load_env
   need_cmd "${PYTHON_BIN}"
-  [[ -d "${SUBSCRIBE_DIR}" ]] || die "sing-box-subscribe directory not found: ${SUBSCRIBE_DIR}"
-  [[ -f "${SUBSCRIBE_DIR}/main.py" ]] || die "missing ${SUBSCRIBE_DIR}/main.py"
   [[ -f "${EXTRACT_PROVIDERS_FILE}" ]] || die "missing providers config: ${EXTRACT_PROVIDERS_FILE}"
 
   mkdir -p "$(dirname "${NODES_FILE}")"
   "${PYTHON_BIN}" "${SCRIPTS_DIR}/extract_nodes.py" \
-    --subscribe-dir "${SUBSCRIBE_DIR}" \
     --providers-file "${EXTRACT_PROVIDERS_FILE}" \
     --output-file "${NODES_FILE}"
   log "extracted nodes -> ${NODES_FILE}"

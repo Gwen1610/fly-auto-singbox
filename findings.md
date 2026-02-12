@@ -32,3 +32,14 @@
   - `bash -n fly` 通过
   - `bash tests/test_pipeline.sh` 通过
   - `python3 -m py_compile scripts/extract_nodes.py scripts/build_config.py` 通过
+
+## 2026-02-12 (internal extractor extension)
+- 已将订阅提取所需代码内置到仓库：`scripts/internal_subscribe/`。
+- `scripts/extract_nodes.py` 已改为本地实现，不再 subprocess 调用外部 `sing-box-subscribe/main.py`。
+- 默认流程现在仅依赖本仓库代码 + Python 依赖（`requests`、`PyYAML`）。
+- 提取器新增无 `requests` 兼容路径：无该依赖时自动回退到 `urllib`。
+- README 已补充必要信息：
+  - 安装后校验命令（`which sing-box` / `sing-box version`）
+  - 订阅填写位置（`config/extract.providers.json`）
+  - 节点输出位置（`build/nodes.json`）
+  - 最终配置输出位置（`config.json`）

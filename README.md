@@ -1,50 +1,28 @@
-# Fly (Decoupled Pipeline)
+# Fly Auto Sing-box
 
-这个版本把能力拆成 3 个独立模块：
+全部代码都在本仓库内实现，不再依赖外部 `sing-box-subscribe` 目录。
 
-1. `install-singbox`：自动下载并安装 Linux/mac 对应的 sing-box。
-2. `extract` + `build-config`：先提取节点，再注入分流规则。
-3. `on/off/status/log`：只负责 sing-box 后台进程生命周期管理。
-
-`sing-box-subscribe` 作为外部依赖，不在本仓库修改。
-
-## 命令
+## 1. 依赖
 
 ```bash
-./fly init [--force]
-./fly install-singbox [--dry-run]
-./fly install-guide
-./fly extract
-./fly build-config
-./fly pipeline
-./fly on
-./fly off
-./fly status
-./fly log
+cd fly-auto-singbox
+pip install -r requirements.txt
 ```
 
-## 目录
-
-- `fly`: 主命令入口
-- `scripts/extract_nodes.py`: 节点提取模块（无分流）
-- `scripts/build_config.py`: 分流注入模块
-- `config/fly.env.example`: 运行配置模板
-- `config/extract.providers.example.json`: 提取配置模板
-- `config/route-rules.json`: 分流规则
-- `config/base-template.json`: 基础 sing-box 模板
-
-## 第一步：初始化
+## 2. 初始化
 
 ```bash
 ./fly init
 ```
 
-会生成本地文件（可改）：
+会生成两个你要编辑的文件：
 
 - `config/fly.env`
 - `config/extract.providers.json`
 
-## 第二步：自动安装 sing-box
+## 3. 自动安装 sing-box
+
+默认安装：
 
 ```bash
 ./fly install-singbox
@@ -59,46 +37,65 @@
 ./fly install-singbox --dry-run
 ```
 
-说明：
+安装后校验：
 
-- 自动识别当前系统 `linux/darwin` 和 `amd64/arm64`。
-- 从 GitHub Releases 自动匹配对应资产并安装。
-- `install-guide` 现在是 `install-singbox --dry-run` 的兼容别名。
+```bash
+which sing-box
+sing-box version
+```
 
-## 第三步：配置提取参数
+## 4. 订阅链接填哪里
 
-编辑 `config/extract.providers.json`，填入你的订阅信息（与 `sing-box-subscribe` 兼容）。
+编辑 `config/extract.providers.json`，在 `subscribes[].url` 填你的订阅链接或本地订阅文件路径。
 
-编辑 `config/fly.env`，确认：
+最小示例：
 
-- `SUBSCRIBE_DIR` 指向你的 `sing-box-subscribe` 目录
-- `SING_BOX_BIN` 指向本机 `sing-box` 可执行文件
+```json
+{
+  "subscribes": [
+    {
+      "tag": "default",
+      "enabled": true,
+      "url": "https://example.com/subscription",
+      "prefix": "",
+      "emoji": 0,
+      "ex-node-name": ""
+    }
+  ]
+}
+```
 
-## 第四步：生成配置（解耦两段）
-
-只提取节点（无分流）：
+## 5. 提取节点（只提 US/HK/SG/JP，不加分流）
 
 ```bash
 ./fly extract
 ```
 
-会输出 `build/nodes.json`。
+输出文件：
 
-注入分流生成最终配置：
+- `build/nodes.json`
+
+## 6. 注入分流规则生成最终配置
 
 ```bash
 ./fly build-config
 ```
 
-会输出 `config.json`。
+输入规则文件：
 
-一键执行两段：
+- `config/route-rules.json`
+
+输出文件：
+
+- `config.json`
+
+也可以一步跑完提取+构建：
 
 ```bash
 ./fly pipeline
 ```
 
-## 第五步：后台进程管理
+## 7. 启停与日志
 
 启动：
 
@@ -124,13 +121,12 @@
 ./fly log
 ```
 
-说明：
+关键运行文件：
 
-- 默认使用 `sudo` 启停（适配 TUN 场景）。
-- 进程管理基于 `nohup + .sing-box.pid`。
-- 命令幂等：重复 `on/off` 不会产生脏状态。
+- PID: `.sing-box.pid`
+- Log: `sing-box.log`
 
-## 测试
+## 8. 测试
 
 ```bash
 bash tests/test_pipeline.sh
