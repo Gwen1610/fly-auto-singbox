@@ -29,3 +29,8 @@
 - [x] 重写 README，补充安装校验、订阅填写位置、输出文件位置。
 - [x] 跑全量验证（`bash -n fly`、`python3 -m py_compile ...`、`bash tests/test_pipeline.sh`）。
 - [x] push 本轮“内置提取器”改动。
+- [x] 新增 `check-singbox` 命令用于安装前检查。
+- [x] `install-singbox` 增加同版本自动跳过与 `--force` 强制重装逻辑。
+- [x] README 增加 `sing-box-subscribe` 原作者署名与“先检查再安装”流程。
+- [x] 再次完成验证（`bash -n fly`、`python3 -m py_compile ...`、`bash tests/test_pipeline.sh`）。
+- [ ] 提交并 push 本轮“安装逻辑完善+署名”改动。

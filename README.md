@@ -20,9 +20,18 @@ pip install -r requirements.txt
 - `config/fly.env`
 - `config/extract.providers.json`
 
-## 3. 自动安装 sing-box
+## 3. 先检查是否已安装 sing-box
 
-默认安装：
+```bash
+./fly check-singbox
+```
+
+- 如果输出 `not installed`，再执行安装。
+- 如果输出已安装路径和版本，按需决定是否重装。
+
+## 4. 自动安装 sing-box
+
+默认安装（自动识别 Linux/mac + 架构）：
 
 ```bash
 ./fly install-singbox
@@ -35,16 +44,24 @@ pip install -r requirements.txt
 ./fly install-singbox --os linux --arch amd64
 ./fly install-singbox --install-dir /usr/local/bin
 ./fly install-singbox --dry-run
+./fly install-singbox --force
 ```
 
-安装后校验：
+安装逻辑：
+
+- 默认先检查当前已安装版本。
+- 目标版本已安装时会跳过下载。
+- 用 `--force` 可强制重装。
+
+安装后再次校验：
 
 ```bash
+./fly check-singbox
 which sing-box
 sing-box version
 ```
 
-## 4. 订阅链接填哪里
+## 5. 订阅链接填哪里
 
 编辑 `config/extract.providers.json`，在 `subscribes[].url` 填你的订阅链接或本地订阅文件路径。
 
@@ -65,7 +82,7 @@ sing-box version
 }
 ```
 
-## 5. 提取节点（只提 US/HK/SG/JP，不加分流）
+## 6. 提取节点（只提 US/HK/SG/JP，不加分流）
 
 ```bash
 ./fly extract
@@ -75,7 +92,7 @@ sing-box version
 
 - `build/nodes.json`
 
-## 6. 注入分流规则生成最终配置
+## 7. 注入分流规则生成最终配置
 
 ```bash
 ./fly build-config
@@ -95,7 +112,7 @@ sing-box version
 ./fly pipeline
 ```
 
-## 7. 启停与日志
+## 8. 启停与日志
 
 启动：
 
@@ -126,8 +143,13 @@ sing-box version
 - PID: `.sing-box.pid`
 - Log: `sing-box.log`
 
-## 8. 测试
+## 9. 测试
 
 ```bash
 bash tests/test_pipeline.sh
 ```
+
+## 10. 署名
+
+- 内置节点提取器代码来自开源项目 `sing-box-subscribe`。
+- 原作者：`Toperlock`（仓库：`https://github.com/Toperlock/sing-box-subscribe`）。

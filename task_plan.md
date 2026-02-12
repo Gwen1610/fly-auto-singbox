@@ -8,7 +8,7 @@
 4) `fly install-singbox` 自动下载并安装 Linux/mac 对应版本（当前会话仅 dry-run 验证，不实际下载）。
 
 ## Current Phase
-Phase 7
+Phase 8
 
 ## Phases
 
@@ -53,6 +53,13 @@ Phase 7
 - [x] 更新 README 必要信息与测试
 - [x] 提交并 push
 - **Status:** complete
+
+### Phase 8: Install Logic & Attribution Polish
+- [x] 增加 `check-singbox` 命令
+- [x] 安装前检查已有版本并支持自动跳过/`--force`
+- [x] README 增加作者署名与更完整的必要操作说明
+- [ ] 提交并 push
+- **Status:** in_progress
 
 ## Errors Encountered
 | Error | Attempt | Resolution |

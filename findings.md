@@ -43,3 +43,13 @@
   - 订阅填写位置（`config/extract.providers.json`）
   - 节点输出位置（`build/nodes.json`）
   - 最终配置输出位置（`config.json`）
+
+## 2026-02-12 (install flow polish)
+- 新增 `./fly check-singbox`：用于安装前检查本机是否已安装及当前版本。
+- `install-singbox` 新增：
+  - 已安装同版本时自动跳过下载；
+  - `--force` 可强制重装；
+  - `--dry-run` 会显示 `will_skip` 决策结果。
+- README 增加开源来源署名：
+  - 提取器来源项目：`Toperlock/sing-box-subscribe`
+  - 原作者：`Toperlock`

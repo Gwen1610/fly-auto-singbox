@@ -50,7 +50,8 @@ Fly - decoupled sing-box pipeline
 
 Usage:
   ./fly init [--force]
-  ./fly install-singbox [--version v] [--os linux|darwin] [--arch amd64|arm64] [--install-dir dir] [--dry-run]
+  ./fly check-singbox
+  ./fly install-singbox [--version v] [--os linux|darwin] [--arch amd64|arm64] [--install-dir dir] [--dry-run] [--force]
   ./fly install-guide
   ./fly extract
   ./fly build-config
@@ -63,6 +64,7 @@ Usage:
 
 Command summary:
   init          Create local runtime config files from templates
+  check-singbox Show installed sing-box path and version
   install-singbox Auto download + install sing-box for linux/mac
   install-guide  Alias of install-singbox --dry-run
   extract       Extract region nodes only (US/HK/SG/JP, no route rules)
@@ -188,6 +190,60 @@ print(asset_url)
 PY
 }
 
+normalize_version() {
+  local raw="$1"
+  raw="${raw#v}"
+  printf '%s' "${raw}" | sed -E 's/^[^0-9]*([0-9]+\.[0-9]+\.[0-9]+([.-][A-Za-z0-9]+)?)?.*$/\1/'
+}
+
+resolve_singbox_binary_path() {
+  local configured="${SING_BOX_BIN}"
+  local resolved=""
+  if [[ "${configured}" == */* ]]; then
+    resolved="$(abs_path "${configured}")"
+    if [[ -x "${resolved}" ]]; then
+      printf '%s\n' "${resolved}"
+      return 0
+    fi
+  else
+    resolved="$(command -v "${configured}" 2>/dev/null || true)"
+    if [[ -n "${resolved}" ]]; then
+      printf '%s\n' "${resolved}"
+      return 0
+    fi
+  fi
+
+  if [[ "${configured}" != "sing-box" ]]; then
+    resolved="$(command -v sing-box 2>/dev/null || true)"
+    if [[ -n "${resolved}" ]]; then
+      printf '%s\n' "${resolved}"
+      return 0
+    fi
+  fi
+
+  resolved="${SINGBOX_INSTALL_DIR%/}/sing-box"
+  if [[ -x "${resolved}" ]]; then
+    printf '%s\n' "${resolved}"
+    return 0
+  fi
+  return 1
+}
+
+get_singbox_installed_info() {
+  local path=""
+  path="$(resolve_singbox_binary_path || true)"
+  if [[ -z "${path}" ]]; then
+    return 1
+  fi
+  local ver_line=""
+  ver_line="$("${path}" version 2>/dev/null | head -n 1 || true)"
+  local norm_ver=""
+  norm_ver="$(normalize_version "${ver_line}")"
+  printf '%s\n' "${path}"
+  printf '%s\n' "${ver_line}"
+  printf '%s\n' "${norm_ver}"
+}
+
 run_as_sudo() {
   if [[ -n "${SUDO_BIN}" ]]; then
     "${SUDO_BIN}" "$@"
@@ -269,6 +325,7 @@ cmd_install_singbox() {
   local target_arch=""
   local install_dir="${SINGBOX_INSTALL_DIR}"
   local dry_run="false"
+  local force_install="false"
   local releases_file=""
 
   while [[ $# -gt 0 ]]; do
@@ -295,6 +352,9 @@ cmd_install_singbox() {
         ;;
       --dry-run)
         dry_run="true"
+        ;;
+      --force)
+        force_install="true"
         ;;
       --releases-json)
         shift
@@ -331,6 +391,21 @@ cmd_install_singbox() {
   asset_name="$(printf '%s\n' "${release_meta}" | sed -n '2p')"
   asset_url="$(printf '%s\n' "${release_meta}" | sed -n '3p')"
 
+  local installed_path="" installed_line="" installed_norm=""
+  local info=""
+  info="$(get_singbox_installed_info || true)"
+  if [[ -n "${info}" ]]; then
+    installed_path="$(printf '%s\n' "${info}" | sed -n '1p')"
+    installed_line="$(printf '%s\n' "${info}" | sed -n '2p')"
+    installed_norm="$(printf '%s\n' "${info}" | sed -n '3p')"
+  fi
+  local release_norm
+  release_norm="$(normalize_version "${release_tag}")"
+  local will_skip="false"
+  if [[ -n "${installed_norm}" ]] && [[ "${installed_norm}" == "${release_norm}" ]] && ! is_true "${force_install}"; then
+    will_skip="true"
+  fi
+
   if is_true "${dry_run}"; then
     cat <<EOF
 [dry-run] sing-box install plan
@@ -339,7 +414,17 @@ asset=${asset_name}
 url=${asset_url}
 install_dir=${install_dir}
 sudo=${SUDO_BIN:-<none>}
+installed_path=${installed_path:-<none>}
+installed_version=${installed_norm:-<unknown>}
+will_skip=${will_skip}
 EOF
+    trap - RETURN
+    rm -rf "${tmp_dir}"
+    return 0
+  fi
+
+  if is_true "${will_skip}"; then
+    log "sing-box already installed: ${installed_path} (${installed_norm}), skip download (use --force to reinstall)"
     trap - RETURN
     rm -rf "${tmp_dir}"
     return 0
@@ -370,6 +455,23 @@ EOF
   "${install_dir}/sing-box" version || true
   trap - RETURN
   rm -rf "${tmp_dir}"
+}
+
+cmd_check_singbox() {
+  load_env
+  local info=""
+  info="$(get_singbox_installed_info || true)"
+  if [[ -z "${info}" ]]; then
+    printf 'not installed\n'
+    return 0
+  fi
+  local installed_path installed_line installed_norm
+  installed_path="$(printf '%s\n' "${info}" | sed -n '1p')"
+  installed_line="$(printf '%s\n' "${info}" | sed -n '2p')"
+  installed_norm="$(printf '%s\n' "${info}" | sed -n '3p')"
+  printf 'installed_path=%s\n' "${installed_path}"
+  printf 'version_line=%s\n' "${installed_line:-<unknown>}"
+  printf 'version=%s\n' "${installed_norm:-<unknown>}"
 }
 
 cmd_install_guide() {
@@ -524,6 +626,7 @@ main() {
 
   case "${cmd}" in
     init) init_files "$@" ;;
+    check-singbox) cmd_check_singbox "$@" ;;
     install-singbox) cmd_install_singbox "$@" ;;
     install-guide) cmd_install_guide "$@" ;;
     extract) cmd_extract "$@" ;;

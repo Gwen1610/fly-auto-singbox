@@ -62,7 +62,7 @@ if [[ "${1:-}" == "run" ]]; then
   done
 fi
 if [[ "${1:-}" == "version" ]]; then
-  echo "sing-box mock"
+  echo "sing-box version 1.12.20"
   exit 0
 fi
 echo "mock sing-box unsupported args: $*" >&2
@@ -129,10 +129,21 @@ cat > "./build/releases.json" <<'JSON'
 ]
 JSON
 
+check_out="$(./fly check-singbox)"
+if [[ "${check_out}" != installed_path=* ]]; then
+  echo "ASSERT FAIL: expected installed path in check-singbox output, got '${check_out}'" >&2
+  exit 1
+fi
+if ! printf '%s\n' "${check_out}" | grep -q "version=1.12.20"; then
+  echo "ASSERT FAIL: expected version=1.12.20 in check-singbox output" >&2
+  exit 1
+fi
+
 ./fly install-singbox --dry-run --os linux --arch amd64 --version 1.12.20 --releases-json ./build/releases.json > "${WORK_DIR}/install.out"
 assert_contains 'release_tag=v1.12.20' "${WORK_DIR}/install.out"
 assert_contains 'stable-linux-amd64.tar.gz' "${WORK_DIR}/install.out"
 assert_contains 'install_dir=\./bin-install' "${WORK_DIR}/install.out"
+assert_contains 'will_skip=true' "${WORK_DIR}/install.out"
 
 ./fly install-guide --os darwin --arch arm64 --version latest --releases-json ./build/releases.json > "${WORK_DIR}/install-guide.out"
 assert_contains 'stable-darwin-arm64.tar.gz' "${WORK_DIR}/install-guide.out"
