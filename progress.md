@@ -53,3 +53,8 @@
 - [x] 删除 `config_template/minimal_four_regions.json`，统一模板入口为 `config/base-template.json`。
 - [x] 更新 README 与测试，确保默认输出不含 `geosite/geoip`。
 - [x] 提交并 push 本轮“移除历史分流策略”改动。
+- [x] 为 `fly` 增加基于 TTY 的彩色输出（info/warn/error/state）。
+- [x] 保证非交互输出纯文本，维持脚本与测试兼容。
+- [x] README 增补颜色说明与 `NO_COLOR=1` 用法。
+- [x] 整理 markdown：计划文档增加 archive note。
+- [x] 提交并 push 本轮“颜色输出 + markdown 收尾”改动。

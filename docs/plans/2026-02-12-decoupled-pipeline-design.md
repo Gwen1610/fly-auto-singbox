@@ -1,5 +1,7 @@
 # Decoupled Fly Pipeline Implementation Plan
 
+> Archive note (2026-02-12): this is an implementation plan snapshot. For current behavior, use `README.md`.
+
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
 **Goal:** 在 `fly-auto-singbox` 中实现三段解耦流水线：手动安装指导、节点提取与分流构建分离、以及 sing-box 后台进程 on/off 管理。

@@ -80,3 +80,13 @@
 - 现在默认模板只保留基础网络结构，不内置任何基于 geosite/geoip 的策略。
 - `config_template/minimal_four_regions.json` 已删除，模板来源统一为 `config/base-template.json`。
 - 测试新增断言：生成的 `config.json` 不应包含 `geosite` 或 `geoip` 字样。
+
+## 2026-02-12 (terminal colors + markdown cleanup)
+- `fly` 增加终端彩色输出：
+  - 蓝色：普通 `[fly]` 日志；
+  - 黄色：`warn`、`not running`、`already running`；
+  - 红色：`die` 错误；
+  - 绿色：`started/stopped/running`。
+- 彩色输出仅在交互终端启用；当输出被重定向/管道时自动降级为纯文本，不影响脚本与测试解析。
+- 支持通过 `NO_COLOR=1` 手动关闭颜色。
+- markdown 收尾：为 `docs/plans/*` 增加 archive note，提示以 `README.md` 为当前行为准。

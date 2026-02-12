@@ -8,7 +8,7 @@
 4) `fly install-singbox` 自动下载并安装 Linux/mac 对应版本（当前会话仅 dry-run 验证，不实际下载）。
 
 ## Current Phase
-Phase 11
+Phase 12
 
 ## Phases
 
@@ -80,6 +80,14 @@ Phase 11
 - [x] 从 `config/base-template.json` 移除所有 `geosite/geoip/rule_set` 相关策略
 - [x] 删除 `config_template/minimal_four_regions.json`，仅保留单一模板
 - [x] README 与测试同步“无预置分流策略”行为
+- [x] 提交并 push
+- **Status:** complete
+
+### Phase 12: CLI Color Output + Markdown Cleanup
+- [x] 为 `fly` 增加按终端能力自动启停的彩色输出
+- [x] 保持非交互输出纯文本，确保脚本解析兼容
+- [x] README 补充颜色行为与关闭方式
+- [x] 整理 markdown（计划文档加归档说明）
 - [x] 提交并 push
 - **Status:** complete
 

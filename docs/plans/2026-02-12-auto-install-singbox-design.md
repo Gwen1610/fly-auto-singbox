@@ -1,5 +1,7 @@
 # Auto Install Sing-box Implementation Plan
 
+> Archive note (2026-02-12): this is an implementation plan snapshot. For current behavior, use `README.md`.
+
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
 **Goal:** 为 `fly` 增加可自动下载并安装 sing-box 的命令，支持 Linux/macOS，对本地开发机仅做 dry-run 测试不实际下载。

@@ -13,16 +13,66 @@ PROVIDERS_EXAMPLE_FILE="${CONFIG_DIR}/extract.providers.example.json"
 ROUTE_RULES_FILE_DEFAULT="${CONFIG_DIR}/route-rules.json"
 ROUTE_RULES_EXAMPLE_FILE="${CONFIG_DIR}/route-rules.example.json"
 
+COLOR_RESET=$'\033[0m'
+COLOR_BLUE=$'\033[34m'
+COLOR_GREEN=$'\033[32m'
+COLOR_YELLOW=$'\033[33m'
+COLOR_RED=$'\033[31m'
+COLOR_CYAN=$'\033[36m'
+COLOR_STDOUT_ENABLED="0"
+COLOR_STDERR_ENABLED="0"
+
+if [[ -z "${NO_COLOR:-}" ]] && [[ "${TERM:-}" != "dumb" ]]; then
+  if [[ -t 1 ]]; then
+    COLOR_STDOUT_ENABLED="1"
+  fi
+  if [[ -t 2 ]]; then
+    COLOR_STDERR_ENABLED="1"
+  fi
+fi
+
+stdout_line() {
+  local color="$1"
+  local text="$2"
+  if [[ "${COLOR_STDOUT_ENABLED}" == "1" ]]; then
+    printf '%b%s%b\n' "${color}" "${text}" "${COLOR_RESET}"
+  else
+    printf '%s\n' "${text}"
+  fi
+}
+
+stderr_line() {
+  local color="$1"
+  local text="$2"
+  if [[ "${COLOR_STDERR_ENABLED}" == "1" ]]; then
+    printf '%b%s%b\n' "${color}" "${text}" "${COLOR_RESET}" >&2
+  else
+    printf '%s\n' "${text}" >&2
+  fi
+}
+
 log() {
-  printf '[fly] %s\n' "$*"
+  if [[ "${COLOR_STDOUT_ENABLED}" == "1" ]]; then
+    printf '%b[fly]%b %s\n' "${COLOR_BLUE}" "${COLOR_RESET}" "$*"
+  else
+    printf '[fly] %s\n' "$*"
+  fi
 }
 
 warn() {
-  printf '[fly][warn] %s\n' "$*" >&2
+  if [[ "${COLOR_STDERR_ENABLED}" == "1" ]]; then
+    printf '%b[fly][warn]%b %s\n' "${COLOR_YELLOW}" "${COLOR_RESET}" "$*" >&2
+  else
+    printf '[fly][warn] %s\n' "$*" >&2
+  fi
 }
 
 die() {
-  printf '[fly][error] %s\n' "$*" >&2
+  if [[ "${COLOR_STDERR_ENABLED}" == "1" ]]; then
+    printf '%b[fly][error]%b %s\n' "${COLOR_RED}" "${COLOR_RESET}" "$*" >&2
+  else
+    printf '[fly][error] %s\n' "$*" >&2
+  fi
   exit 1
 }
 
@@ -533,7 +583,7 @@ cmd_on() {
 
   local old_pid=""
   if old_pid="$(read_pid_file)" && pid_is_alive "${old_pid}"; then
-    printf 'already running (pid: %s)\n' "${old_pid}"
+    stdout_line "${COLOR_YELLOW}" "already running (pid: ${old_pid})"
     return 0
   fi
 
@@ -557,8 +607,8 @@ cmd_on() {
   if ! pid_is_alive "${new_pid}"; then
     die "process failed to start (pid=${new_pid}); check ${LOG_FILE}"
   fi
-  printf 'started (pid: %s)\n' "${new_pid}"
-  printf 'log: %s\n' "${LOG_FILE}"
+  stdout_line "${COLOR_GREEN}" "started (pid: ${new_pid})"
+  stdout_line "${COLOR_CYAN}" "log: ${LOG_FILE}"
 }
 
 cmd_off() {
@@ -590,9 +640,9 @@ cmd_off() {
   fi
 
   if [[ "${stopped}" == "true" ]]; then
-    printf 'stopped\n'
+    stdout_line "${COLOR_GREEN}" "stopped"
   else
-    printf 'not running\n'
+    stdout_line "${COLOR_YELLOW}" "not running"
   fi
 }
 
@@ -600,9 +650,9 @@ cmd_status() {
   load_env
   local pid=""
   if pid="$(read_pid_file)" && pid_is_alive "${pid}"; then
-    printf 'running (pid: %s)\n' "${pid}"
+    stdout_line "${COLOR_GREEN}" "running (pid: ${pid})"
   else
-    printf 'not running\n'
+    stdout_line "${COLOR_YELLOW}" "not running"
   fi
 }
 
