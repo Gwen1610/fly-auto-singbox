@@ -65,3 +65,9 @@
 - [x] 修复无 `requests`/无 `PyYAML` 的运行回退。
 - [x] README 增加 `build-rules` 使用说明并补充 `sing-box-geosite` 署名。
 - [x] 提交并 push 本轮“QX 规则转换模块集成”改动。
+- [x] 新增 `manual_rules` 支持，允许直接写 QX 单行补充规则。
+- [x] 新增 `Direct/Reject` 出口别名规范化与 `block` outbound 支持。
+- [x] 更新示例配置，加入人工补充规则样例（含 `GEOIP,CN,Direct`）。
+- [x] 更新测试覆盖 manual rules + alias 转换路径。
+- [x] 完成验证（`bash -n fly`、`conda run -n yellow python -m py_compile ...`、`bash tests/test_pipeline.sh`）。
+- [ ] 提交并 push 本轮“manual_rules + alias 兼容”改动。

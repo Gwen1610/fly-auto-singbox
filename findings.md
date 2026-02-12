@@ -103,3 +103,12 @@
   - 无 `requests` 时自动回退到 `urllib`；
   - 无 `PyYAML` 时使用最小 `payload` 解析回退；
   - 相对路径规则源支持 `sources 文件目录` 与 `当前工作目录` 双路径解析。
+
+## 2026-02-12 (manual supplements + outbound alias normalization)
+- 新增 `manual_rules` 字段：可直接在 `config/rule-sources*.json` 写 QX 单行规则（例如 `DOMAIN-SUFFIX, ai.dev, America`）。
+- `build_route_rules.py` 现在会解析 `manual_rules` 并合并到输出 `route-rules.json`。
+- 出口别名自动规范化：
+  - `Direct -> direct`
+  - `Reject -> block`
+- `build_config.py` 已增加 `block` outbound，并在校验阶段对 `final/outbound` 做同样的别名规范化。
+- 你的补充规则模式（`DOMAIN-SUFFIX/HOST/HOST-KEYWORD/GEOIP`）均已覆盖并通过测试。

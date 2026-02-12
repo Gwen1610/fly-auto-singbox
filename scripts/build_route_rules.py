@@ -39,6 +39,23 @@ MAP_DICT = {
     "DOMAIN-REGEX": "domain_regex",
 }
 
+OUTBOUND_ALIAS = {
+    "proxy": "Proxy",
+    "america": "America",
+    "us": "America",
+    "usa": "America",
+    "hongkong": "HongKong",
+    "hong_kong": "HongKong",
+    "hk": "HongKong",
+    "singapore": "Singapore",
+    "sg": "Singapore",
+    "japan": "Japan",
+    "jp": "Japan",
+    "direct": "direct",
+    "reject": "block",
+    "block": "block",
+}
+
 
 def load_json(path: Path):
     with path.open("r", encoding="utf-8") as f:
@@ -123,6 +140,44 @@ def parse_entry(raw: str) -> Tuple[str, str]:
     return "domain", value
 
 
+def normalize_outbound(raw: str) -> str:
+    value = str(raw).strip()
+    if not value:
+        return value
+    return OUTBOUND_ALIAS.get(value.lower(), value)
+
+
+def parse_manual_rule_line(raw: str) -> Tuple[str, str, str]:
+    line = raw.strip()
+    if not line or line.startswith("#") or line.startswith(";") or line.startswith("//"):
+        return "", "", ""
+    parts = [part.strip() for part in line.split(",")]
+    if len(parts) < 3:
+        raise RuntimeError(f"manual rule requires at least 3 fields: {raw}")
+
+    key, value = parse_entry(",".join(parts[:2]))
+    if not key or not value:
+        raise RuntimeError(f"manual rule pattern not supported: {raw}")
+
+    outbound = normalize_outbound(parts[2])
+    if not outbound:
+        raise RuntimeError(f"manual rule outbound is empty: {raw}")
+    return key, value, outbound
+
+
+def normalize_rule_outbounds(rules: List[dict]) -> List[dict]:
+    normalized: List[dict] = []
+    for rule in rules:
+        if not isinstance(rule, dict):
+            normalized.append(rule)
+            continue
+        copied = dict(rule)
+        if isinstance(copied.get("outbound"), str):
+            copied["outbound"] = normalize_outbound(copied["outbound"])
+        normalized.append(copied)
+    return normalized
+
+
 def parse_entries_from_yaml(text: str) -> Iterable[str]:
     if yaml is None:
         # Minimal fallback parser for payload-based yaml when PyYAML is unavailable.
@@ -196,6 +251,7 @@ def main():
     final = cfg.get("final", "Proxy")
     prepend_rules = cfg.get("prepend_rules", [])
     append_rules = cfg.get("append_rules", [])
+    manual_rules = cfg.get("manual_rules", [])
     sources = cfg.get("sources", [])
 
     if not isinstance(final, str) or not final.strip():
@@ -204,8 +260,17 @@ def main():
         raise RuntimeError("prepend_rules must be array")
     if not isinstance(append_rules, list):
         raise RuntimeError("append_rules must be array")
+    if not isinstance(manual_rules, list):
+        raise RuntimeError("manual_rules must be array")
     if not isinstance(sources, list):
         raise RuntimeError("sources must be array")
+    for index, item in enumerate(manual_rules):
+        if not isinstance(item, str):
+            raise RuntimeError(f"manual_rules[{index}] must be string")
+
+    final = normalize_outbound(final)
+    prepend_rules = normalize_rule_outbounds(prepend_rules)
+    append_rules = normalize_rule_outbounds(append_rules)
 
     built_rules: List[dict] = []
     enabled_count = 0
@@ -216,7 +281,7 @@ def main():
 
         enabled_count += 1
         src = item["url"].strip()
-        outbound = item["outbound"].strip()
+        outbound = normalize_outbound(item["outbound"].strip())
         tag = str(item.get("tag", f"source-{index + 1}"))
 
         text = read_text_from_source(src, sources_path.parent)
@@ -233,10 +298,21 @@ def main():
     if enabled_count == 0:
         print("warn: no enabled rule sources; output will keep only prepend/append rules", file=sys.stderr)
 
-    output = {"final": final, "rules": [*prepend_rules, *built_rules, *append_rules]}
+    manual_map: Dict[Tuple[str, str], Set[str]] = {}
+    for line in manual_rules:
+        key, value, outbound = parse_manual_rule_line(line)
+        if not key:
+            continue
+        manual_map.setdefault((outbound, key), set()).add(value)
+
+    manual_blocks: List[dict] = []
+    for (outbound, key), values in sorted(manual_map.items(), key=lambda x: (x[0][0], x[0][1])):
+        manual_blocks.append({key: sorted(values), "outbound": outbound})
+
+    output = {"final": final, "rules": [*prepend_rules, *built_rules, *manual_blocks, *append_rules]}
     save_json(Path(args.output_file).resolve(), output)
     print(f"saved route rules: {Path(args.output_file).resolve()}")
-    print(f"generated rule blocks: {len(built_rules)}")
+    print(f"generated rule blocks: {len(built_rules) + len(manual_blocks)}")
 
 
 if __name__ == "__main__":

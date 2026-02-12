@@ -35,6 +35,23 @@ REGION_PATTERNS = OrderedDict(
     ]
 )
 
+OUTBOUND_ALIAS = {
+    "proxy": "Proxy",
+    "america": "America",
+    "us": "America",
+    "usa": "America",
+    "hongkong": "HongKong",
+    "hong_kong": "HongKong",
+    "hk": "HongKong",
+    "singapore": "Singapore",
+    "sg": "Singapore",
+    "japan": "Japan",
+    "jp": "Japan",
+    "direct": "direct",
+    "reject": "block",
+    "block": "block",
+}
+
 
 def load_json(path: Path):
     with path.open("r", encoding="utf-8") as f:
@@ -105,17 +122,27 @@ def build_outbounds(grouped):
             members = ["direct"]
         outbounds.append({"tag": region, "type": "selector", "outbounds": members})
     outbounds.append({"type": "direct", "tag": "direct"})
+    outbounds.append({"type": "block", "tag": "block"})
 
     for region in grouped:
         outbounds.extend(grouped[region])
     return outbounds
 
 
+def normalize_outbound(raw):
+    if raw is None:
+        return raw
+    value = str(raw).strip()
+    if not value:
+        return value
+    return OUTBOUND_ALIAS.get(value.lower(), value)
+
+
 def validate_rules(rules_cfg, outbound_tags):
     if not isinstance(rules_cfg, dict):
         raise RuntimeError("rules file must be a JSON object")
     rules = rules_cfg.get("rules", [])
-    final = rules_cfg.get("final", "Proxy")
+    final = normalize_outbound(rules_cfg.get("final", "Proxy"))
     if not isinstance(rules, list):
         raise RuntimeError("rules must be an array")
     if final not in outbound_tags:
@@ -123,7 +150,9 @@ def validate_rules(rules_cfg, outbound_tags):
     for index, rule in enumerate(rules):
         if not isinstance(rule, dict):
             raise RuntimeError(f"rules[{index}] must be object")
-        outbound = rule.get("outbound")
+        outbound = normalize_outbound(rule.get("outbound"))
+        if "outbound" in rule:
+            rule["outbound"] = outbound
         if outbound and outbound not in outbound_tags:
             raise RuntimeError(f"rules[{index}] outbound not found: {outbound}")
     return final, rules

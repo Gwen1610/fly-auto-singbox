@@ -143,6 +143,9 @@ cat > "./build/domains.txt" <<'EOF'
 .example.org
 example.net
 EOF
+cat > "./build/reject.list" <<'EOF'
+DOMAIN-SUFFIX,ads.example
+EOF
 cat > "./config/rule-sources.json" <<'JSON'
 {
   "final": "Proxy",
@@ -165,7 +168,18 @@ cat > "./config/rule-sources.json" <<'JSON'
       "enabled": true,
       "url": "./build/domains.txt",
       "outbound": "Singapore"
+    },
+    {
+      "tag": "RejectSet",
+      "enabled": true,
+      "url": "./build/reject.list",
+      "outbound": "Reject"
     }
+  ],
+  "manual_rules": [
+    "DOMAIN-SUFFIX, ruc.edu.cn, Direct",
+    "HOST, aistudio.google.com, America",
+    "GEOIP, CN, Direct"
   ],
   "append_rules": []
 }
@@ -175,8 +189,11 @@ JSON
 assert_contains '"outbound": "America"' "./config/route-rules.json"
 assert_contains '"outbound": "HongKong"' "./config/route-rules.json"
 assert_contains '"outbound": "Singapore"' "./config/route-rules.json"
+assert_contains '"outbound": "direct"' "./config/route-rules.json"
+assert_contains '"outbound": "block"' "./config/route-rules.json"
 assert_contains '"domain_suffix": \[' "./config/route-rules.json"
 assert_contains '"domain": \[' "./config/route-rules.json"
+assert_contains '"geoip": \[' "./config/route-rules.json"
 
 ./fly build-config
 python3 - <<'PY'
@@ -186,8 +203,12 @@ with open("./config.json", "r", encoding="utf-8") as f:
     cfg = json.load(f)
 
 rules = cfg.get("route", {}).get("rules", [])
-if len(rules) < 3:
+if len(rules) < 4:
     raise SystemExit("ASSERT FAIL: expected generated route rules from build-rules")
+
+tags = {item.get("tag") for item in cfg.get("outbounds", []) if isinstance(item, dict)}
+if "block" not in tags:
+    raise SystemExit("ASSERT FAIL: expected block outbound for Reject mapping")
 PY
 
 ./fly pipeline

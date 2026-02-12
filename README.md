@@ -122,6 +122,12 @@ sing-box version
       "url": "https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/master/rule/Clash/OpenAI/OpenAI.yaml",
       "outbound": "America"
     }
+  ],
+  "manual_rules": [
+    "DOMAIN-SUFFIX, ai.dev, America",
+    "HOST, aistudio.google.com, America",
+    "DOMAIN-SUFFIX, moonshot.cn, Direct",
+    "GEOIP, CN, Direct"
   ]
 }
 ```
@@ -141,6 +147,8 @@ sing-box version
 - 这是独立模块，只负责转换规则并生成 `route-rules.json`。
 - 不会修改 `build/nodes.json` 和 `config.json`。
 - 你也可以不使用它，继续手动编辑 `config/route-rules.json`。
+- `manual_rules` 支持直接写 QX 风格单行规则（`类型, 值, 出口`）。
+- 出口名支持别名：`Direct -> direct`、`Reject -> block`（会自动规范化）。
 
 ## 8. 注入分流规则生成最终配置
 

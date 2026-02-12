@@ -3,17 +3,130 @@
   "prepend_rules": [],
   "sources": [
     {
-      "tag": "OpenAI",
-      "enabled": false,
-      "url": "https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/master/rule/Clash/OpenAI/OpenAI.yaml",
-      "outbound": "America"
+      "tag": "Advertising",
+      "enabled": true,
+      "url": "https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/master/rule/QuantumultX/Advertising/Advertising.list",
+      "outbound": "Reject"
+    },
+    {
+      "tag": "Hijacking",
+      "enabled": true,
+      "url": "https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/master/rule/QuantumultX/Hijacking/Hijacking.list",
+      "outbound": "Reject"
+    },
+    {
+      "tag": "Privacy",
+      "enabled": true,
+      "url": "https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/master/rule/QuantumultX/Privacy/Privacy.list",
+      "outbound": "Reject"
     },
     {
       "tag": "YouTube",
-      "enabled": false,
+      "enabled": true,
       "url": "https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/master/rule/QuantumultX/YouTube/YouTube.list",
       "outbound": "HongKong"
+    },
+    {
+      "tag": "GitHub",
+      "enabled": true,
+      "url": "https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/master/rule/QuantumultX/GitHub/GitHub.list",
+      "outbound": "HongKong"
+    },
+    {
+      "tag": "Notion",
+      "enabled": true,
+      "url": "https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/master/rule/QuantumultX/Notion/Notion.list",
+      "outbound": "HongKong"
+    },
+    {
+      "tag": "Reddit",
+      "enabled": true,
+      "url": "https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/master/rule/QuantumultX/Reddit/Reddit.list",
+      "outbound": "HongKong"
+    },
+    {
+      "tag": "OpenAI",
+      "enabled": true,
+      "url": "https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/master/rule/QuantumultX/OpenAI/OpenAI.list",
+      "outbound": "America"
+    },
+    {
+      "tag": "Copilot",
+      "enabled": true,
+      "url": "https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/master/rule/QuantumultX/Copilot/Copilot.list",
+      "outbound": "America"
+    },
+    {
+      "tag": "Gemini",
+      "enabled": true,
+      "url": "https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/master/rule/QuantumultX/Gemini/Gemini.list",
+      "outbound": "America"
+    },
+    {
+      "tag": "Google",
+      "enabled": true,
+      "url": "https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/master/rule/QuantumultX/Google/Google.list",
+      "outbound": "America"
+    },
+    {
+      "tag": "BiliBili",
+      "enabled": true,
+      "url": "https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/master/rule/QuantumultX/BiliBili/BiliBili.list",
+      "outbound": "Direct"
+    },
+    {
+      "tag": "Zhihu",
+      "enabled": true,
+      "url": "https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/master/rule/QuantumultX/Zhihu/Zhihu.list",
+      "outbound": "Direct"
+    },
+    {
+      "tag": "WeChat",
+      "enabled": true,
+      "url": "https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/master/rule/QuantumultX/WeChat/WeChat.list",
+      "outbound": "Direct"
+    },
+    {
+      "tag": "XiaoHongShu",
+      "enabled": true,
+      "url": "https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/master/rule/QuantumultX/XiaoHongShu/XiaoHongShu.list",
+      "outbound": "Direct"
+    },
+    {
+      "tag": "iCloud",
+      "enabled": true,
+      "url": "https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/master/rule/QuantumultX/iCloud/iCloud.list",
+      "outbound": "Direct"
+    },
+    {
+      "tag": "iCloudPrivateRelay",
+      "enabled": true,
+      "url": "https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/master/rule/QuantumultX/iCloudPrivateRelay/iCloudPrivateRelay.list",
+      "outbound": "Direct"
+    },
+    {
+      "tag": "Apple",
+      "enabled": true,
+      "url": "https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/master/rule/QuantumultX/Apple/Apple.list",
+      "outbound": "Direct"
+    },
+    {
+      "tag": "China",
+      "enabled": true,
+      "url": "https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/master/rule/QuantumultX/China/China.list",
+      "outbound": "Direct"
     }
+  ],
+  "manual_rules": [
+    "DOMAIN-SUFFIX, ruc.edu.cn, Direct",
+    "DOMAIN-SUFFIX, ai.dev, America",
+    "HOST, aistudio.google.com, America",
+    "DOMAIN-SUFFIX, makersuite.google.com, America",
+    "DOMAIN-SUFFIX, moonshot.cn, Direct",
+    "DOMAIN-SUFFIX, sflep.com, Direct",
+    "HOST-KEYWORD, aliyundrive, Direct",
+    "HOST-KEYWORD, siamparagon, Direct",
+    "GEOIP, CN, Direct"
   ],
   "append_rules": []
 }

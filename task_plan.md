@@ -8,7 +8,7 @@
 4) `fly install-singbox` 自动下载并安装 Linux/mac 对应版本（当前会话仅 dry-run 验证，不实际下载）。
 
 ## Current Phase
-Phase 13
+Phase 14
 
 ## Phases
 
@@ -99,6 +99,15 @@ Phase 13
 - [x] README 增加使用说明与 `sing-box-geosite` 署名
 - [x] 提交并 push
 - **Status:** complete
+
+### Phase 14: Manual Rule Supplements + Outbound Alias Compatibility
+- [x] 支持在 `rule-sources` 中直接写 QX 单行补充规则（`manual_rules`）
+- [x] 支持 `Direct/Reject` 等策略名自动规范化（`Direct->direct`, `Reject->block`）
+- [x] `build-config` 增加 `block` outbound 并兼容别名校验
+- [x] 示例配置与 README 增加人工补充规则说明
+- [x] 测试覆盖 `manual_rules` + `GEOIP` + `Reject` 路径
+- [ ] 提交并 push
+- **Status:** in_progress
 
 ## Errors Encountered
 | Error | Attempt | Resolution |
