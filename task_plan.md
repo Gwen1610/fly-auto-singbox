@@ -124,8 +124,8 @@ Phase 16
 - [x] 支持业务组（如 `Streaming`/`AI`）引用地区组并设置默认值
 - [x] README 增加分组设计哲学与可配置示例
 - [x] 测试覆盖双订阅来源 + 分层组生成 + 默认选择器校验
-- [ ] 提交并 push
-- **Status:** in_progress
+- [x] 提交并 push
+- **Status:** complete
 
 ## Errors Encountered
 | Error | Attempt | Resolution |

@@ -83,4 +83,4 @@
 - [x] README 补充分组设计哲学和配置示例。
 - [x] 更新测试覆盖 `A/B` 双订阅来源与 `Streaming/AI` 分组。
 - [x] 完成验证（`bash -n fly`、`conda run -n yellow python -m py_compile ...`、`bash tests/test_pipeline.sh`）。
-- [ ] 提交并 push 本轮“分层分组策略”改动。
+- [x] 提交并 push 本轮“分层分组策略”改动。
