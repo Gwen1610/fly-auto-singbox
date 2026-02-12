@@ -193,7 +193,9 @@ assert_contains '"outbound": "direct"' "./config/route-rules.json"
 assert_contains '"outbound": "block"' "./config/route-rules.json"
 assert_contains '"domain_suffix": \[' "./config/route-rules.json"
 assert_contains '"domain": \[' "./config/route-rules.json"
-assert_contains '"geoip": \[' "./config/route-rules.json"
+assert_contains '"rule_set": \[' "./config/route-rules.json"
+assert_contains '"geoip-cn"' "./config/route-rules.json"
+assert_not_contains '"geoip": \[' "./config/route-rules.json"
 
 ./fly build-config
 python3 - <<'PY'
@@ -209,6 +211,10 @@ if len(rules) < 4:
 tags = {item.get("tag") for item in cfg.get("outbounds", []) if isinstance(item, dict)}
 if "block" not in tags:
     raise SystemExit("ASSERT FAIL: expected block outbound for Reject mapping")
+
+route_sets = cfg.get("route", {}).get("rule_set", [])
+if not any(isinstance(item, dict) and item.get("tag") == "geoip-cn" for item in route_sets):
+    raise SystemExit("ASSERT FAIL: expected geoip-cn rule_set to be injected")
 PY
 
 ./fly pipeline

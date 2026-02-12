@@ -149,6 +149,7 @@ sing-box version
 - 你也可以不使用它，继续手动编辑 `config/route-rules.json`。
 - `manual_rules` 支持直接写 QX 风格单行规则（`类型, 值, 出口`）。
 - 出口名支持别名：`Direct -> direct`、`Reject -> block`（会自动规范化）。
+- `GEOIP,CN,Direct` 会自动转换为 `rule_set=geoip-cn`（兼容 sing-box 1.12+）。
 
 ## 8. 注入分流规则生成最终配置
 

@@ -32,7 +32,6 @@ MAP_DICT = {
     "IP-CIDR6": "ip_cidr",
     "IP6-CIDR": "ip_cidr",
     "SRC-IP-CIDR": "source_ip_cidr",
-    "GEOIP": "geoip",
     "DST-PORT": "port",
     "SRC-PORT": "source_port",
     "URL-REGEX": "domain_regex",
@@ -125,6 +124,11 @@ def parse_entry(raw: str) -> Tuple[str, str]:
         value = normalize_raw_value(parts[1])
         if not value:
             return "", ""
+        if pattern.upper() == "GEOIP":
+            # sing-box 1.12 removed legacy geoip matcher; map CN to remote rule-set tag.
+            if value.lower() == "cn":
+                return "rule_set", "geoip-cn"
+            raise RuntimeError(f"GEOIP value not supported in sing-box 1.12+: {value}")
         key = MAP_DICT.get(pattern)
         if not key:
             return "", ""

@@ -52,6 +52,16 @@ OUTBOUND_ALIAS = {
     "block": "block",
 }
 
+RULE_SET_PRESETS = {
+    "geoip-cn": {
+        "tag": "geoip-cn",
+        "type": "remote",
+        "format": "binary",
+        "url": "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geoip/cn.srs",
+        "download_detour": "direct",
+    }
+}
+
 
 def load_json(path: Path):
     with path.open("r", encoding="utf-8") as f:
@@ -138,6 +148,43 @@ def normalize_outbound(raw):
     return OUTBOUND_ALIAS.get(value.lower(), value)
 
 
+def ensure_legacy_geoip_compat(rule):
+    if "geoip" not in rule:
+        return
+    value = rule.pop("geoip")
+    values = value if isinstance(value, list) else [value]
+    normalized = [str(item).strip().lower() for item in values if str(item).strip()]
+    if not normalized:
+        return
+    unsupported = [item for item in normalized if item != "cn"]
+    if unsupported:
+        raise RuntimeError(
+            "geoip matcher is removed in sing-box 1.12; unsupported geoip values: "
+            + ",".join(unsupported)
+        )
+    existing = rule.get("rule_set", [])
+    if isinstance(existing, str):
+        existing = [existing]
+    if not isinstance(existing, list):
+        raise RuntimeError("rule_set must be string or array when converting geoip")
+    if "geoip-cn" not in existing:
+        existing.append("geoip-cn")
+    rule["rule_set"] = existing
+
+
+def collect_required_rule_sets(rules):
+    tags = set()
+    for rule in rules:
+        if not isinstance(rule, dict):
+            continue
+        value = rule.get("rule_set")
+        if isinstance(value, str):
+            tags.add(value)
+        elif isinstance(value, list):
+            tags.update(str(item) for item in value)
+    return tags
+
+
 def validate_rules(rules_cfg, outbound_tags):
     if not isinstance(rules_cfg, dict):
         raise RuntimeError("rules file must be a JSON object")
@@ -150,6 +197,7 @@ def validate_rules(rules_cfg, outbound_tags):
     for index, rule in enumerate(rules):
         if not isinstance(rule, dict):
             raise RuntimeError(f"rules[{index}] must be object")
+        ensure_legacy_geoip_compat(rule)
         outbound = normalize_outbound(rule.get("outbound"))
         if "outbound" in rule:
             rule["outbound"] = outbound
@@ -166,8 +214,26 @@ def build_config(base_template, outbounds, final_outbound, rules):
     route_base = config.get("route", {})
     if not isinstance(route_base, dict):
         route_base = {}
+    existing_rule_sets = route_base.get("rule_set", [])
+    if isinstance(existing_rule_sets, dict):
+        existing_rule_sets = [existing_rule_sets]
+    if not isinstance(existing_rule_sets, list):
+        existing_rule_sets = []
+
+    existing_tags = set()
+    for item in existing_rule_sets:
+        if isinstance(item, dict) and isinstance(item.get("tag"), str):
+            existing_tags.add(item["tag"])
+
+    for tag in sorted(collect_required_rule_sets(rules)):
+        preset = RULE_SET_PRESETS.get(tag)
+        if preset and tag not in existing_tags:
+            existing_rule_sets.append(deepcopy(preset))
+            existing_tags.add(tag)
+
     route_base["final"] = final_outbound
     route_base["rules"] = rules
+    route_base["rule_set"] = existing_rule_sets
 
     config["outbounds"] = outbounds
     config["route"] = route_base
