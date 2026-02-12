@@ -1,29 +1,42 @@
 {
   "region_defaults": {
-    "HongKong": "A"
+    "HongKong": "M78",
+    "America": "TAG",
+    "Singapore": "M78",
+    "Japan": "M78"
   },
   "custom_groups": [
     {
       "tag": "Streaming",
       "members": [
         "HongKong",
-        "America"
+        "Japan",
+        "Singapore"
       ],
       "default": "HongKong"
     },
     {
       "tag": "AI",
       "members": [
+        "America",
+        "Singapore",
+        "Japan"
+      ],
+      "default": "America"
+    },
+    {
+      "tag": "Search",
+      "members": [
         "HongKong",
-        "America"
+        "America",
+        "Singapore",
+        "Japan"
       ],
       "default": "HongKong"
     }
   ],
   "proxy": {
     "members": [
-      "Streaming",
-      "AI",
       "HongKong",
       "America",
       "Singapore",

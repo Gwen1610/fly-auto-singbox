@@ -109,6 +109,12 @@ cat > "./config/group-strategy.json" <<'JSON'
   }
 }
 JSON
+cat > "./config/route-rules.json" <<'JSON'
+{
+  "final": "Proxy",
+  "rules": []
+}
+JSON
 
 cat > "./bin/sing-box" <<'SH'
 #!/usr/bin/env bash

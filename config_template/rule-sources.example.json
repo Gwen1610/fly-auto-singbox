@@ -24,49 +24,49 @@
       "tag": "YouTube",
       "enabled": true,
       "url": "https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/master/rule/QuantumultX/YouTube/YouTube.list",
-      "outbound": "HongKong"
+      "outbound": "Streaming"
     },
     {
       "tag": "GitHub",
       "enabled": true,
       "url": "https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/master/rule/QuantumultX/GitHub/GitHub.list",
-      "outbound": "HongKong"
+      "outbound": "Streaming"
     },
     {
       "tag": "Notion",
       "enabled": true,
       "url": "https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/master/rule/QuantumultX/Notion/Notion.list",
-      "outbound": "HongKong"
+      "outbound": "Streaming"
     },
     {
       "tag": "Reddit",
       "enabled": true,
       "url": "https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/master/rule/QuantumultX/Reddit/Reddit.list",
-      "outbound": "HongKong"
+      "outbound": "Streaming"
     },
     {
       "tag": "OpenAI",
       "enabled": true,
       "url": "https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/master/rule/QuantumultX/OpenAI/OpenAI.list",
-      "outbound": "America"
+      "outbound": "AI"
     },
     {
       "tag": "Copilot",
       "enabled": true,
       "url": "https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/master/rule/QuantumultX/Copilot/Copilot.list",
-      "outbound": "America"
+      "outbound": "AI"
     },
     {
       "tag": "Gemini",
       "enabled": true,
       "url": "https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/master/rule/QuantumultX/Gemini/Gemini.list",
-      "outbound": "America"
+      "outbound": "AI"
     },
     {
       "tag": "Google",
       "enabled": true,
       "url": "https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/master/rule/QuantumultX/Google/Google.list",
-      "outbound": "America"
+      "outbound": "Search"
     },
     {
       "tag": "BiliBili",
