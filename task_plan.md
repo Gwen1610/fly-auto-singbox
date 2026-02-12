@@ -114,8 +114,8 @@ Phase 15
 - [x] 更新 `fly init` 模板路径到 `config_template/`
 - [x] README 同步模板路径说明
 - [x] 运行验证（`bash -n fly`、`bash tests/test_pipeline.sh`）
-- [ ] 提交并 push
-- **Status:** in_progress
+- [x] 提交并 push
+- **Status:** complete
 
 ## Errors Encountered
 | Error | Attempt | Resolution |

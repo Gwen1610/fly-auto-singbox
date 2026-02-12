@@ -75,4 +75,4 @@
 - [x] 更新 `fly init` 模板读取路径。
 - [x] 更新 README 中 `.example` 路径说明。
 - [x] 完成验证（`bash -n fly`、`bash tests/test_pipeline.sh`）。
-- [ ] 提交并 push 本轮“模板目录统一”改动。
+- [x] 提交并 push 本轮“模板目录统一”改动。
