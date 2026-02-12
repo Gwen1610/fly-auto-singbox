@@ -14,4 +14,5 @@
 - [x] 删除旧测试 `tests/test_fly.sh`，新增 `tests/test_pipeline.sh`。
 - [x] 运行 `bash tests/test_pipeline.sh` 并通过。
 - [x] 运行 `bash -n fly` 和 `python3 -m py_compile ...` 并通过。
-- [ ] 执行 git commit + push。
+- [x] 执行 git commit。
+- [x] 执行 `git push origin main`。

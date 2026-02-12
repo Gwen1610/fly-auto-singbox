@@ -16,3 +16,6 @@
   - `bash tests/test_pipeline.sh` 通过。
   - `bash -n fly` 通过。
   - `python3 -m py_compile scripts/extract_nodes.py scripts/build_config.py` 通过。
+- Git 交付：
+  - commit: `5210806` (`refactor: decouple fly pipeline into extract/build/runtime modules`)
+  - push: 已推送到 `origin/main`（远端提示仓库新地址为 `https://github.com/Gwen1610/fly-auto-singbox.git`）

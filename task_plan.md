@@ -36,8 +36,8 @@ Phase 5
 
 ### Phase 5: Git Delivery
 - [x] 提交变更
-- [ ] push 到 `origin/main`
-- **Status:** in_progress
+- [x] push 到 `origin/main`
+- **Status:** complete
 
 ## Errors Encountered
 | Error | Attempt | Resolution |
