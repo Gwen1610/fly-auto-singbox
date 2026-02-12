@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-FLY_VERSION="0.2.0"
+FLY_VERSION="0.3.0"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG_DIR="${ROOT_DIR}/config"
 BUILD_DIR="${ROOT_DIR}/build"
@@ -50,6 +50,7 @@ Fly - decoupled sing-box pipeline
 
 Usage:
   ./fly init [--force]
+  ./fly install-singbox [--version v] [--os linux|darwin] [--arch amd64|arm64] [--install-dir dir] [--dry-run]
   ./fly install-guide
   ./fly extract
   ./fly build-config
@@ -62,7 +63,8 @@ Usage:
 
 Command summary:
   init          Create local runtime config files from templates
-  install-guide Print manual sing-box download/install commands (no auto install)
+  install-singbox Auto download + install sing-box for linux/mac
+  install-guide  Alias of install-singbox --dry-run
   extract       Use sing-box-subscribe to extract region nodes only (no route rules)
   build-config  Build final config.json by injecting route rules into extracted nodes
   pipeline      Run extract + build-config
@@ -105,6 +107,8 @@ load_env() {
   : "${PID_FILE:=./.sing-box.pid}"
   : "${LOG_FILE:=./sing-box.log}"
   : "${SINGBOX_VERSION:=1.12.20}"
+  : "${SINGBOX_INSTALL_DIR:=/usr/local/bin}"
+  : "${SINGBOX_RELEASES_API:=https://api.github.com/repos/SagerNet/sing-box/releases}"
 
   SUBSCRIBE_DIR="$(abs_path "${SUBSCRIBE_DIR}")"
   EXTRACT_PROVIDERS_FILE="$(abs_path "${EXTRACT_PROVIDERS_FILE}")"
@@ -114,6 +118,76 @@ load_env() {
   CONFIG_JSON="$(abs_path "${CONFIG_JSON}")"
   PID_FILE="$(abs_path "${PID_FILE}")"
   LOG_FILE="$(abs_path "${LOG_FILE}")"
+}
+
+detect_os() {
+  case "$(uname -s)" in
+    Linux) printf 'linux\n' ;;
+    Darwin) printf 'darwin\n' ;;
+    *) die "unsupported OS: $(uname -s)" ;;
+  esac
+}
+
+detect_arch() {
+  case "$(uname -m)" in
+    x86_64|amd64) printf 'amd64\n' ;;
+    aarch64|arm64) printf 'arm64\n' ;;
+    *) die "unsupported architecture: $(uname -m)" ;;
+  esac
+}
+
+resolve_release_asset() {
+  local version="$1"
+  local target_os="$2"
+  local target_arch="$3"
+  local releases_file="$4"
+  python3 - "${version}" "${target_os}" "${target_arch}" "${releases_file}" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+version = sys.argv[1]
+target_os = sys.argv[2]
+target_arch = sys.argv[3]
+releases = json.loads(Path(sys.argv[4]).read_text(encoding="utf-8"))
+
+if not isinstance(releases, list):
+    raise SystemExit("unexpected releases API response")
+
+target_release = None
+if version == "latest":
+    for rel in releases:
+        if not rel.get("prerelease"):
+            target_release = rel
+            break
+else:
+    wanted = version.lstrip("v")
+    for rel in releases:
+        tag = str(rel.get("tag_name", "")).lstrip("v")
+        if tag == wanted:
+            target_release = rel
+            break
+
+if not target_release:
+    raise SystemExit(f"cannot find release for version: {version}")
+
+asset_url = ""
+asset_name = ""
+needle = f"{target_os}-{target_arch}"
+for asset in target_release.get("assets", []):
+    name = str(asset.get("name", ""))
+    if needle in name and name.endswith(".tar.gz"):
+        asset_name = name
+        asset_url = str(asset.get("browser_download_url", ""))
+        break
+
+if not asset_url:
+    raise SystemExit(f"no {needle} .tar.gz asset found in {target_release.get('tag_name')}")
+
+print(str(target_release.get("tag_name", "")))
+print(asset_name)
+print(asset_url)
+PY
 }
 
 run_as_sudo() {
@@ -190,31 +264,118 @@ init_files() {
   log "init complete"
 }
 
-cmd_install_guide() {
+cmd_install_singbox() {
   load_env
-  local arch
-  case "$(uname -m)" in
-    x86_64|amd64) arch="amd64" ;;
-    aarch64|arm64) arch="arm64" ;;
-    *) arch="<amd64|arm64>" ;;
-  esac
+  local version="${SINGBOX_VERSION}"
+  local target_os=""
+  local target_arch=""
+  local install_dir="${SINGBOX_INSTALL_DIR}"
+  local dry_run="false"
+  local releases_file=""
 
-  cat <<EOF
-# Manual sing-box installation guide (same download path as old flow)
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --version)
+        shift
+        [[ $# -gt 0 ]] || die "missing value for --version"
+        version="$1"
+        ;;
+      --os)
+        shift
+        [[ $# -gt 0 ]] || die "missing value for --os"
+        target_os="$1"
+        ;;
+      --arch)
+        shift
+        [[ $# -gt 0 ]] || die "missing value for --arch"
+        target_arch="$1"
+        ;;
+      --install-dir)
+        shift
+        [[ $# -gt 0 ]] || die "missing value for --install-dir"
+        install_dir="$1"
+        ;;
+      --dry-run)
+        dry_run="true"
+        ;;
+      --releases-json)
+        shift
+        [[ $# -gt 0 ]] || die "missing value for --releases-json"
+        releases_file="$(abs_path "$1")"
+        ;;
+      *)
+        die "unknown flag for install-singbox: $1"
+        ;;
+    esac
+    shift
+  done
 
-VERSION="${SINGBOX_VERSION}"
-ARCH="${arch}"
+  [[ -n "${target_os}" ]] || target_os="$(detect_os)"
+  [[ -n "${target_arch}" ]] || target_arch="$(detect_arch)"
+  [[ "${target_os}" =~ ^(linux|darwin)$ ]] || die "unsupported --os: ${target_os}"
+  [[ "${target_arch}" =~ ^(amd64|arm64)$ ]] || die "unsupported --arch: ${target_arch}"
 
-# 1) Download tarball from official GitHub Releases
-curl -fL "https://github.com/SagerNet/sing-box/releases/download/v\${VERSION}/sing-box-\${VERSION}-linux-\${ARCH}.tar.gz" -o /tmp/sing-box.tar.gz
+  local tmp_dir
+  tmp_dir="$(mktemp -d)"
+  trap 'rm -rf "${tmp_dir:-}"' RETURN
 
-# 2) Extract and install binary
-tar -xzf /tmp/sing-box.tar.gz -C /tmp
-sudo install -m 755 "\$(find /tmp -type f -name sing-box | head -n 1)" /usr/local/bin/sing-box
+  if [[ -z "${releases_file}" ]]; then
+    need_cmd curl
+    releases_file="${tmp_dir}/releases.json"
+    curl -fsSL "${SINGBOX_RELEASES_API}" -o "${releases_file}"
+  else
+    [[ -f "${releases_file}" ]] || die "missing releases JSON file: ${releases_file}"
+  fi
 
-# 3) Verify
-sing-box version
+  local release_meta release_tag asset_name asset_url
+  release_meta="$(resolve_release_asset "${version}" "${target_os}" "${target_arch}" "${releases_file}")"
+  release_tag="$(printf '%s\n' "${release_meta}" | sed -n '1p')"
+  asset_name="$(printf '%s\n' "${release_meta}" | sed -n '2p')"
+  asset_url="$(printf '%s\n' "${release_meta}" | sed -n '3p')"
+
+  if is_true "${dry_run}"; then
+    cat <<EOF
+[dry-run] sing-box install plan
+release_tag=${release_tag}
+asset=${asset_name}
+url=${asset_url}
+install_dir=${install_dir}
+sudo=${SUDO_BIN:-<none>}
 EOF
+    trap - RETURN
+    rm -rf "${tmp_dir}"
+    return 0
+  fi
+
+  need_cmd curl
+  need_cmd tar
+  need_cmd install
+
+  local tarball="${tmp_dir}/sing-box.tar.gz"
+  log "downloading ${asset_name}"
+  curl -fsSL "${asset_url}" -o "${tarball}"
+  tar -xzf "${tarball}" -C "${tmp_dir}"
+
+  local binary_path
+  binary_path="$(find "${tmp_dir}" -type f -name sing-box | head -n 1 || true)"
+  [[ -n "${binary_path}" ]] || die "cannot find sing-box binary in downloaded archive"
+
+  if [[ -n "${SUDO_BIN}" ]]; then
+    "${SUDO_BIN}" install -d "${install_dir}"
+    "${SUDO_BIN}" install -m 755 "${binary_path}" "${install_dir}/sing-box"
+  else
+    install -d "${install_dir}"
+    install -m 755 "${binary_path}" "${install_dir}/sing-box"
+  fi
+
+  log "installed sing-box -> ${install_dir}/sing-box"
+  "${install_dir}/sing-box" version || true
+  trap - RETURN
+  rm -rf "${tmp_dir}"
+}
+
+cmd_install_guide() {
+  cmd_install_singbox --dry-run "$@"
 }
 
 cmd_extract() {
@@ -368,6 +529,7 @@ main() {
 
   case "${cmd}" in
     init) init_files "$@" ;;
+    install-singbox) cmd_install_singbox "$@" ;;
     install-guide) cmd_install_guide "$@" ;;
     extract) cmd_extract "$@" ;;
     build-config) cmd_build_config "$@" ;;

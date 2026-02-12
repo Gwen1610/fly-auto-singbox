@@ -1,13 +1,14 @@
-# Task Plan: 解耦 fly sing-box pipeline
+# Task Plan: 解耦 Pipeline + 自动安装
 
 ## Goal
-在 `fly-auto-singbox` 中实现三段解耦：
+在 `fly-auto-singbox` 中实现三段解耦，并新增自动安装能力：
 1) 手动安装指导（保留原下载方式，但不自动安装）；
 2) 基于 `sing-box-subscribe` 的节点提取（不含分流）+ 分流构建（独立模块）；
 3) `fly on/off/status/log` 后台进程管理。
+4) `fly install-singbox` 自动下载并安装 Linux/mac 对应版本（当前会话仅 dry-run 验证，不实际下载）。
 
 ## Current Phase
-Phase 5
+Phase 6
 
 ## Phases
 
@@ -38,6 +39,13 @@ Phase 5
 - [x] 提交变更
 - [x] push 到 `origin/main`
 - **Status:** complete
+
+### Phase 6: Auto Install Extension
+- [x] 新增自动安装设计文档
+- [x] 实现 `install-singbox`
+- [x] 更新测试与 README
+- [ ] 验证并 push
+- **Status:** in_progress
 
 ## Errors Encountered
 | Error | Attempt | Resolution |

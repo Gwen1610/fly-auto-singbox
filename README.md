@@ -2,7 +2,7 @@
 
 这个版本把能力拆成 3 个独立模块：
 
-1. `install-guide`：只提供手动安装 sing-box 指南，不自动安装。
+1. `install-singbox`：自动下载并安装 Linux/mac 对应的 sing-box。
 2. `extract` + `build-config`：先提取节点，再注入分流规则。
 3. `on/off/status/log`：只负责 sing-box 后台进程生命周期管理。
 
@@ -12,6 +12,7 @@
 
 ```bash
 ./fly init [--force]
+./fly install-singbox [--dry-run]
 ./fly install-guide
 ./fly extract
 ./fly build-config
@@ -43,13 +44,26 @@
 - `config/fly.env`
 - `config/extract.providers.json`
 
-## 第二步：手动安装 sing-box（不自动化）
+## 第二步：自动安装 sing-box
 
 ```bash
-./fly install-guide
+./fly install-singbox
 ```
 
-该命令只打印安装命令（GitHub Releases 下载 + `install`）。
+常用参数：
+
+```bash
+./fly install-singbox --version 1.12.20
+./fly install-singbox --os linux --arch amd64
+./fly install-singbox --install-dir /usr/local/bin
+./fly install-singbox --dry-run
+```
+
+说明：
+
+- 自动识别当前系统 `linux/darwin` 和 `amd64/arm64`。
+- 从 GitHub Releases 自动匹配对应资产并安装。
+- `install-guide` 现在是 `install-singbox --dry-run` 的兼容别名。
 
 ## 第三步：配置提取参数
 

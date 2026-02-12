@@ -16,3 +16,10 @@
 - [x] 运行 `bash -n fly` 和 `python3 -m py_compile ...` 并通过。
 - [x] 执行 git commit。
 - [x] 执行 `git push origin main`。
+- [x] 为自动安装能力新增计划文档 `docs/plans/2026-02-12-auto-install-singbox-design.md`。
+- [x] 实现 `install-singbox`（linux/darwin + amd64/arm64 + version/install-dir/dry-run）。
+- [x] 将 `install-guide` 调整为 `install-singbox --dry-run` 兼容别名。
+- [x] 更新 README 与 `config/fly.env.example`。
+- [x] 更新 `tests/test_pipeline.sh`：新增 mock releases + dry-run 安装断言。
+- [x] 完成验证（语法、测试、Python 编译）。
+- [ ] 提交并 push 本轮变更。

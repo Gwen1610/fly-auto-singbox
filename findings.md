@@ -19,3 +19,16 @@
 - Git 交付：
   - commit: `5210806` (`refactor: decouple fly pipeline into extract/build/runtime modules`)
   - push: 已推送到 `origin/main`（远端提示仓库新地址为 `https://github.com/Gwen1610/fly-auto-singbox.git`）
+
+## 2026-02-12 (auto install extension)
+- 新增 `install-singbox` 自动安装命令，支持：
+  - OS: `linux` / `darwin`
+  - ARCH: `amd64` / `arm64`
+  - 参数：`--version` `--install-dir` `--dry-run` `--releases-json`
+- `install-guide` 改为兼容别名，等价 `install-singbox --dry-run`。
+- 解析资产方式为 GitHub Releases 元数据解析，不硬编码文件名。
+- 测试仅使用 `--dry-run` + 本地 mock `releases.json`，未触发真实下载。
+- 验证结果：
+  - `bash -n fly` 通过
+  - `bash tests/test_pipeline.sh` 通过
+  - `python3 -m py_compile scripts/extract_nodes.py scripts/build_config.py` 通过

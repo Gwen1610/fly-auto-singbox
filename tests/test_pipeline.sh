@@ -87,6 +87,7 @@ CONFIG_JSON="./config.json"
 PID_FILE="./.sing-box.pid"
 LOG_FILE="./sing-box.log"
 SINGBOX_VERSION="1.12.20"
+SINGBOX_INSTALL_DIR="./bin-install"
 EOF
 
 ./fly extract
@@ -104,9 +105,42 @@ assert_contains '"outbound": "America"' "./config.json"
 ./fly pipeline
 assert_file_exists "./config.json"
 
-./fly install-guide > "${WORK_DIR}/install-guide.out"
-assert_contains 'curl -fL' "${WORK_DIR}/install-guide.out"
-assert_contains 'sing-box version' "${WORK_DIR}/install-guide.out"
+cat > "./build/releases.json" <<'JSON'
+[
+  {
+    "tag_name": "v1.13.0-rc.3",
+    "prerelease": true,
+    "assets": [
+      {
+        "name": "sing-box-1.13.0-rc.3-linux-amd64.tar.gz",
+        "browser_download_url": "https://example.com/rc-linux-amd64.tar.gz"
+      }
+    ]
+  },
+  {
+    "tag_name": "v1.12.20",
+    "prerelease": false,
+    "assets": [
+      {
+        "name": "sing-box-1.12.20-linux-amd64.tar.gz",
+        "browser_download_url": "https://example.com/stable-linux-amd64.tar.gz"
+      },
+      {
+        "name": "sing-box-1.12.20-darwin-arm64.tar.gz",
+        "browser_download_url": "https://example.com/stable-darwin-arm64.tar.gz"
+      }
+    ]
+  }
+]
+JSON
+
+./fly install-singbox --dry-run --os linux --arch amd64 --version 1.12.20 --releases-json ./build/releases.json > "${WORK_DIR}/install.out"
+assert_contains 'release_tag=v1.12.20' "${WORK_DIR}/install.out"
+assert_contains 'stable-linux-amd64.tar.gz' "${WORK_DIR}/install.out"
+assert_contains 'install_dir=\./bin-install' "${WORK_DIR}/install.out"
+
+./fly install-guide --os darwin --arch arm64 --version latest --releases-json ./build/releases.json > "${WORK_DIR}/install-guide.out"
+assert_contains 'stable-darwin-arm64.tar.gz' "${WORK_DIR}/install-guide.out"
 
 ./fly on
 assert_file_exists "./.sing-box.pid"
