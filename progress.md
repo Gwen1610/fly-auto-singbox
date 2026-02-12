@@ -28,4 +28,4 @@
 - [x] 更新 `config/extract.providers.example.json` 与 `requirements.txt`。
 - [x] 重写 README，补充安装校验、订阅填写位置、输出文件位置。
 - [x] 跑全量验证（`bash -n fly`、`python3 -m py_compile ...`、`bash tests/test_pipeline.sh`）。
-- [ ] push 本轮“内置提取器”改动。
+- [x] push 本轮“内置提取器”改动。

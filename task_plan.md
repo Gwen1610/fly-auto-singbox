@@ -51,8 +51,8 @@ Phase 7
 - [x] 内置解析器代码到本仓库
 - [x] 去除 `extract` 对外部目录依赖
 - [x] 更新 README 必要信息与测试
-- [ ] 提交并 push
-- **Status:** in_progress
+- [x] 提交并 push
+- **Status:** complete
 
 ## Errors Encountered
 | Error | Attempt | Resolution |
