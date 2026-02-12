@@ -70,4 +70,4 @@
 - [x] 更新示例配置，加入人工补充规则样例（含 `GEOIP,CN,Direct`）。
 - [x] 更新测试覆盖 manual rules + alias 转换路径。
 - [x] 完成验证（`bash -n fly`、`conda run -n yellow python -m py_compile ...`、`bash tests/test_pipeline.sh`）。
-- [ ] 提交并 push 本轮“manual_rules + alias 兼容”改动。
+- [x] 提交并 push 本轮“manual_rules + alias 兼容”改动。

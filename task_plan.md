@@ -106,8 +106,8 @@ Phase 14
 - [x] `build-config` 增加 `block` outbound 并兼容别名校验
 - [x] 示例配置与 README 增加人工补充规则说明
 - [x] 测试覆盖 `manual_rules` + `GEOIP` + `Reject` 路径
-- [ ] 提交并 push
-- **Status:** in_progress
+- [x] 提交并 push
+- **Status:** complete
 
 ## Errors Encountered
 | Error | Attempt | Resolution |
