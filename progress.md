@@ -71,3 +71,8 @@
 - [x] 更新测试覆盖 manual rules + alias 转换路径。
 - [x] 完成验证（`bash -n fly`、`conda run -n yellow python -m py_compile ...`、`bash tests/test_pipeline.sh`）。
 - [x] 提交并 push 本轮“manual_rules + alias 兼容”改动。
+- [x] 将所有 `.example` 文件迁移到 `config_template/`。
+- [x] 更新 `fly init` 模板读取路径。
+- [x] 更新 README 中 `.example` 路径说明。
+- [x] 完成验证（`bash -n fly`、`bash tests/test_pipeline.sh`）。
+- [ ] 提交并 push 本轮“模板目录统一”改动。

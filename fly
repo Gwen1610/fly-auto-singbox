@@ -4,16 +4,17 @@ set -euo pipefail
 FLY_VERSION="0.3.0"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG_DIR="${ROOT_DIR}/config"
+TEMPLATE_DIR="${ROOT_DIR}/config_template"
 BUILD_DIR="${ROOT_DIR}/build"
 SCRIPTS_DIR="${ROOT_DIR}/scripts"
 ENV_FILE="${CONFIG_DIR}/fly.env"
-ENV_EXAMPLE_FILE="${CONFIG_DIR}/fly.env.example"
+ENV_EXAMPLE_FILE="${TEMPLATE_DIR}/fly.env.example"
 PROVIDERS_FILE="${CONFIG_DIR}/extract.providers.json"
-PROVIDERS_EXAMPLE_FILE="${CONFIG_DIR}/extract.providers.example.json"
+PROVIDERS_EXAMPLE_FILE="${TEMPLATE_DIR}/extract.providers.example.json"
 RULE_SOURCES_FILE_DEFAULT="${CONFIG_DIR}/rule-sources.json"
-RULE_SOURCES_EXAMPLE_FILE="${CONFIG_DIR}/rule-sources.example.json"
+RULE_SOURCES_EXAMPLE_FILE="${TEMPLATE_DIR}/rule-sources.example.json"
 ROUTE_RULES_FILE_DEFAULT="${CONFIG_DIR}/route-rules.json"
-ROUTE_RULES_EXAMPLE_FILE="${CONFIG_DIR}/route-rules.example.json"
+ROUTE_RULES_EXAMPLE_FILE="${TEMPLATE_DIR}/route-rules.example.json"
 
 COLOR_RESET=$'\033[0m'
 COLOR_BLUE=$'\033[34m'

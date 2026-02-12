@@ -112,3 +112,12 @@
   - `Reject -> block`
 - `build_config.py` 已增加 `block` outbound，并在校验阶段对 `final/outbound` 做同样的别名规范化。
 - 你的补充规则模式（`DOMAIN-SUFFIX/HOST/HOST-KEYWORD/GEOIP`）均已覆盖并通过测试。
+
+## 2026-02-12 (template directory normalization)
+- 按用户建议将所有 `.example` 模板统一迁移到 `config_template/`：
+  - `fly.env.example`
+  - `extract.providers.example.json`
+  - `rule-sources.example.json`
+  - `route-rules.example.json`
+- `fly init` 已改为从 `config_template/` 复制生成运行时文件到 `config/`。
+- README 已同步改为 `config_template/*.example` 路径说明。

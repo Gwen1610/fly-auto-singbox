@@ -8,7 +8,7 @@
 4) `fly install-singbox` 自动下载并安装 Linux/mac 对应版本（当前会话仅 dry-run 验证，不实际下载）。
 
 ## Current Phase
-Phase 14
+Phase 15
 
 ## Phases
 
@@ -108,6 +108,14 @@ Phase 14
 - [x] 测试覆盖 `manual_rules` + `GEOIP` + `Reject` 路径
 - [x] 提交并 push
 - **Status:** complete
+
+### Phase 15: Move All Example Templates to config_template
+- [x] 将所有 `.example` 文件从 `config/` 迁移到 `config_template/`
+- [x] 更新 `fly init` 模板路径到 `config_template/`
+- [x] README 同步模板路径说明
+- [x] 运行验证（`bash -n fly`、`bash tests/test_pipeline.sh`）
+- [ ] 提交并 push
+- **Status:** in_progress
 
 ## Errors Encountered
 | Error | Attempt | Resolution |

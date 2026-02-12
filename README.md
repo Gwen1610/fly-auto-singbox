@@ -19,8 +19,8 @@ pip install -r requirements.txt
 
 - `config/fly.env`
 - `config/extract.providers.json`
-- `config/rule-sources.json`（由 `config/rule-sources.example.json` 生成）
-- `config/route-rules.json`（由 `config/route-rules.example.json` 生成）
+- `config/rule-sources.json`（由 `config_template/rule-sources.example.json` 生成）
+- `config/route-rules.json`（由 `config_template/route-rules.example.json` 生成）
 
 ## 3. 先检查是否已安装 sing-box
 
@@ -158,7 +158,7 @@ sing-box version
 
 输入规则文件：
 
-- `config/route-rules.json`（默认由 `config/route-rules.example.json` 生成）
+- `config/route-rules.json`（默认由 `config_template/route-rules.example.json` 生成）
 
 默认内容：
 
@@ -217,11 +217,11 @@ sing-box version
 - `config/base-template.json`
   - `build-config` 的唯一主模板，定义 inbounds/dns/route 基础结构。
   - 运行时实际使用的是这个文件。
-- `config/rule-sources.example.json`
+- `config_template/rule-sources.example.json`
   - QX/Clash 规则源配置模板。
   - `./fly init` 会复制为 `config/rule-sources.json` 供你编辑。
   - `./fly build-rules` 读取这个文件生成 `config/route-rules.json`。
-- `config/route-rules.example.json`
+- `config_template/route-rules.example.json`
   - 分流规则参考模板。
   - `./fly init` 会复制为 `config/route-rules.json` 供你编辑。
   - 默认是空规则，不包含任何预置分流策略。
