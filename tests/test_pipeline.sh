@@ -89,6 +89,8 @@ EOF
 assert_file_exists "./build/nodes.json"
 assert_contains '"tag": "US-01"' "./build/nodes.json"
 assert_contains '"tag": "香港-01"' "./build/nodes.json"
+assert_contains '"tag": "JP-01"' "./build/nodes.json"
+assert_contains '"tag": "Singapore-01"' "./build/nodes.json"
 
 ./fly build-config
 assert_file_exists "./config.json"

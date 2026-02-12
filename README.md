@@ -82,6 +82,11 @@ sing-box version
 }
 ```
 
+提示：
+
+- `subscribes[].enabled` 必须是 `true` 才会生效。
+- 如果节点名称里没有地区标识（US/HK/SG/JP 或对应中文/常见缩写），提取会失败。
+
 ## 6. 提取节点（只提 US/HK/SG/JP，不加分流）
 
 ```bash
@@ -91,6 +96,12 @@ sing-box version
 输出文件：
 
 - `build/nodes.json`
+
+常见报错：
+
+- `no US/HK/SG/JP nodes found after filtering`
+  - 先检查你的订阅节点名称是否包含地区关键词（例如 `US01`、`HK`、`SGP`、`JP`、`美国`、`香港`、`新加坡`、`日本`）。
+  - 报错里会输出 sample tags，可据此判断命名是否可识别。
 
 ## 7. 注入分流规则生成最终配置
 
@@ -153,3 +164,11 @@ bash tests/test_pipeline.sh
 
 - 内置节点提取器代码来自开源项目 `sing-box-subscribe`。
 - 原作者：`Toperlock`（仓库：`https://github.com/Toperlock/sing-box-subscribe`）。
+
+## 11. 兼容文件
+
+仓库内已提供：
+
+- `config_template/minimal_four_regions.json`
+
+用于兼容旧习惯/旧配置引用路径。

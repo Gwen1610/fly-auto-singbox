@@ -12,25 +12,25 @@ REGION_PATTERNS = OrderedDict(
         (
             "America",
             re.compile(
-                r"(🇺🇸|美国|美國|洛杉矶|洛杉磯|纽约|紐約|旧金山|舊金山|"
-                r"United\s*States|\bUS\b|\bUSA\b|America)",
+                r"(🇺🇸|🇺🇲|美国|美國|美西|美东|美東|洛杉矶|洛杉磯|纽约|紐約|旧金山|舊金山|"
+                r"United\s*States|\bUSA?\b|America|US\d+)",
                 re.IGNORECASE,
             ),
         ),
         (
             "HongKong",
             re.compile(
-                r"(🇭🇰|香港|Hong\s*Kong|\bHK\b|\bHKT\b|\bHKBN\b|\bHGC\b|\bWTT\b|\bCMI\b)",
+                r"(🇭🇰|香港|港线|港線|Hong\s*Kong|HongKong|\bHK\b|HK\d+|\bHKT\b|\bHKBN\b|\bHGC\b|\bWTT\b|\bCMI\b|HKG)",
                 re.IGNORECASE,
             ),
         ),
         (
             "Singapore",
-            re.compile(r"(🇸🇬|新加坡|狮城|獅城|Singapore|\bSG\b)", re.IGNORECASE),
+            re.compile(r"(🇸🇬|新加坡|狮城|獅城|Singapore|\bSG\b|SG\d+|SGP)", re.IGNORECASE),
         ),
         (
             "Japan",
-            re.compile(r"(🇯🇵|日本|东京|東京|大阪|Japan|\bJP\b)", re.IGNORECASE),
+            re.compile(r"(🇯🇵|日本|东京|東京|大阪|Japan|\bJP\b|JP\d+|JPN)", re.IGNORECASE),
         ),
     ]
 )

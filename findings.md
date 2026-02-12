@@ -53,3 +53,9 @@
 - README 增加开源来源署名：
   - 提取器来源项目：`Toperlock/sing-box-subscribe`
   - 原作者：`Toperlock`
+
+## 2026-02-12 (extract compatibility fix)
+- 发现线上报错 `no US/HK/SG/JP nodes found after filtering` 的主要原因是地区正则过严，无法覆盖 `US01/HK01/SGP/JP` 等常见命名。
+- 已放宽 `extract` 和 `build-config` 的地区识别规则，并同步到 `internal_subscribe/tool.py`。
+- `extract` 报错现在会返回 sample tags，方便定位节点命名是否可识别。
+- 已新增 `config_template/minimal_four_regions.json` 兼容文件，避免旧路径引用报缺失。

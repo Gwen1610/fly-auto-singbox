@@ -8,7 +8,7 @@
 4) `fly install-singbox` 自动下载并安装 Linux/mac 对应版本（当前会话仅 dry-run 验证，不实际下载）。
 
 ## Current Phase
-Phase 8
+Phase 9
 
 ## Phases
 
@@ -58,6 +58,13 @@ Phase 8
 - [x] 增加 `check-singbox` 命令
 - [x] 安装前检查已有版本并支持自动跳过/`--force`
 - [x] README 增加作者署名与更完整的必要操作说明
+- [x] 提交并 push
+- **Status:** complete
+
+### Phase 9: Extract Compatibility Fix
+- [x] 放宽 US/HK/SG/JP 匹配规则（支持 US01/HK01/SGP/JP 等）
+- [x] `extract` 失败时输出 sample tags 辅助排查
+- [x] 补充 `config_template/minimal_four_regions.json` 兼容文件
 - [ ] 提交并 push
 - **Status:** in_progress
 

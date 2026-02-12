@@ -64,22 +64,22 @@ REGION_PATTERNS = OrderedDict(
         (
             "America",
             re.compile(
-                r"(🇺🇸|美国|美國|洛杉矶|洛杉磯|纽约|紐約|旧金山|舊金山|"
-                r"United\s*States|\bUS\b|\bUSA\b|America)",
+                r"(🇺🇸|🇺🇲|美国|美國|美西|美东|美東|洛杉矶|洛杉磯|纽约|紐約|旧金山|舊金山|"
+                r"United\s*States|\bUSA?\b|America|US\d+)",
                 re.IGNORECASE,
             ),
         ),
         (
             "HongKong",
-            re.compile(r"(🇭🇰|香港|Hong\s*Kong|\bHK\b|\bHKT\b|\bHKBN\b|\bHGC\b|\bWTT\b|\bCMI\b)", re.IGNORECASE),
+            re.compile(r"(🇭🇰|香港|港线|港線|Hong\s*Kong|HongKong|\bHK\b|HK\d+|\bHKT\b|\bHKBN\b|\bHGC\b|\bWTT\b|\bCMI\b|HKG)", re.IGNORECASE),
         ),
         (
             "Singapore",
-            re.compile(r"(🇸🇬|新加坡|狮城|獅城|Singapore|\bSG\b)", re.IGNORECASE),
+            re.compile(r"(🇸🇬|新加坡|狮城|獅城|Singapore|\bSG\b|SG\d+|SGP)", re.IGNORECASE),
         ),
         (
             "Japan",
-            re.compile(r"(🇯🇵|日本|东京|東京|大阪|Japan|\bJP\b)", re.IGNORECASE),
+            re.compile(r"(🇯🇵|日本|东京|東京|大阪|Japan|\bJP\b|JP\d+|JPN)", re.IGNORECASE),
         ),
     ]
 )
@@ -291,19 +291,38 @@ def detect_region(tag: str):
 
 def filter_nodes_by_region(nodes):
     grouped = OrderedDict((region, []) for region in REGION_PATTERNS.keys())
+    unmatched_tags = []
     for node in nodes:
-        region = detect_region(str(node.get("tag", "")))
+        tag = str(node.get("tag", ""))
+        region = detect_region(tag)
         if region:
             grouped[region].append(node)
+        else:
+            unmatched_tags.append(tag)
 
     total = sum(len(items) for items in grouped.values())
     if total == 0:
-        raise RuntimeError("no US/HK/SG/JP nodes found after filtering")
+        uniq = []
+        seen = set()
+        for tag in unmatched_tags:
+            if tag in seen:
+                continue
+            seen.add(tag)
+            uniq.append(tag)
+            if len(uniq) >= 8:
+                break
+        sample = ", ".join(uniq) if uniq else "<none>"
+        raise RuntimeError(
+            "no US/HK/SG/JP nodes found after filtering; sample tags: "
+            + sample
+            + ". check node naming or set prefix in config/extract.providers.json"
+        )
 
     output = []
     for region in grouped:
         output.extend(grouped[region])
-    return output
+    counts = {region: len(grouped[region]) for region in grouped}
+    return output, counts
 
 
 def process_subscribes(subscribes):
@@ -365,9 +384,10 @@ def main():
         raise RuntimeError("providers.subscribes must be an array")
 
     nodes = process_subscribes(subscribes)
-    nodes = filter_nodes_by_region(nodes)
+    nodes, counts = filter_nodes_by_region(nodes)
     validate_output(nodes)
     write_json(output_file, nodes)
+    print(f"region counts: {counts}")
     print(f"saved nodes: {output_file}")
 
 
