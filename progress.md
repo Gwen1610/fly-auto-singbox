@@ -22,4 +22,4 @@
 - [x] 更新 README 与 `config/fly.env.example`。
 - [x] 更新 `tests/test_pipeline.sh`：新增 mock releases + dry-run 安装断言。
 - [x] 完成验证（语法、测试、Python 编译）。
-- [ ] 提交并 push 本轮变更。
+- [x] 提交并 push 本轮变更。

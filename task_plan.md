@@ -44,8 +44,8 @@ Phase 6
 - [x] 新增自动安装设计文档
 - [x] 实现 `install-singbox`
 - [x] 更新测试与 README
-- [ ] 验证并 push
-- **Status:** in_progress
+- [x] 验证并 push
+- **Status:** complete
 
 ## Errors Encountered
 | Error | Attempt | Resolution |
