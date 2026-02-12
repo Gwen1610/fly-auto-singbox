@@ -171,6 +171,12 @@ sing-box version
 
 你要加分流时，只改 `config/route-rules.json` 即可。
 
+另外，`build-config` 会为“实际可用性”注入一些默认行为（无需你手改 `config.json`）：
+
+- 为 `tun`/`mixed` 入站开启 `sniff` 与 `sniff_override_destination`（改善按域名/协议识别体验）。
+- 在 `route.rules` 前置注入 `hijack-dns`（接管系统 DNS）、QUIC `reject`（`protocol=quic` / `udp:443`）、以及 `ip_is_private -> direct`。
+- 在 `dns` 中注入 `local` 与 `google` 两个 server，并通过规则实现“节点域名 bootstrap 走 local”和“Google/YouTube 域名走 google”。
+
 输出文件：
 
 - `config.json`
@@ -187,6 +193,11 @@ sing-box version
 
 1. 来源+地区层  
 例如你有两个订阅 `A` 和 `B`，会生成 `A-HongKong`、`B-HongKong`、`A-America` 等组，每组只包含该来源该地区节点。
+
+默认情况下：
+
+- `HongKong`/`Singapore`/`Japan` 的来源+地区组使用 `urltest`（自动选最快）。
+- `America` 的来源+地区组保持 `selector`（手动选择）。
 
 2. 地区聚合层  
 例如 `HongKong` 组会包含 `A-HongKong`、`B-HongKong`，默认值由 `group-strategy` 里的 `region_defaults` 决定（例如默认 `A-HongKong`）。
@@ -261,8 +272,8 @@ sing-box version
 ## 11. 配置文件作用
 
 - `config/base-template.json`
-  - `build-config` 的唯一主模板，定义 inbounds/dns/route 基础结构。
-  - 运行时实际使用的是这个文件。
+  - `build-config` 的主模板，定义 inbounds/dns/route 的基础骨架。
+  - `build-config` 会在此基础上补齐 outbounds，并注入部分“连通性默认行为”（见上文第 8 节）。
 - `config_template/rule-sources.example.json`
   - QX/Clash 规则源配置模板。
   - `./fly init` 会复制为 `config/rule-sources.json` 供你编辑。
@@ -275,6 +286,10 @@ sing-box version
   - 分流规则参考模板。
   - `./fly init` 会复制为 `config/route-rules.json` 供你编辑。
   - 默认是空规则，不包含任何预置分流策略。
+
+## 14. Future Work
+
+见 `docs/future-work.md`。
 
 ## 12. 测试
 

@@ -135,3 +135,13 @@
   - 顶层 `Proxy` 成员与默认值。
 - 新增模板：`config_template/group-strategy.example.json`。
 - `fly init` 与 `fly.env` 已接入 `GROUP_STRATEGY_FILE`，`build-config` 执行时强制校验该文件存在。
+
+## 2026-02-12 (connectivity defaults + urltest regions)
+- 现象：Safari 访问 Google/YouTube 时倾向优先走 QUIC（UDP 443），在部分代理链路上会导致卡死或回落慢。
+- 现象：当 DNS server 设置为 `detour=Proxy` 且节点 `server` 需要 DNS 解析时，会触发 `DNS query loopback in transport[...]`（DNS 解析递归闭环）。
+- 解决：`build-config` 现在会注入连通性默认行为，避免用户手改 `config.json`：
+- 解决：入站启用 `sniff` + `sniff_override_destination`。
+- 解决：路由前置注入 `hijack-dns`、QUIC `reject`（`protocol=quic` / `udp:443`）、以及 `ip_is_private -> direct`。
+- 解决：DNS 注入 `local` 与 `google` server，并通过规则让“节点域名 bootstrap 走 local”，同时让 Google/YouTube 域名走 `google`。
+- 分组体验：`HongKong/Singapore/Japan` 的来源+地区子组默认使用 `urltest` 自动选最快；`America` 保持 `selector` 手动选择。
+- 补充：新增 `docs/future-work.md` 记录后续可选优化（开关化 QUIC、PSL、IPv6 策略、urltest 参数等）。

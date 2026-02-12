@@ -182,8 +182,19 @@ if route.get("final") != "Proxy":
 rules = route.get("rules")
 if not isinstance(rules, list):
     raise SystemExit("ASSERT FAIL: route.rules is not array")
-if len(rules) != 0:
-    raise SystemExit("ASSERT FAIL: expected route.rules to be empty by default")
+if len(rules) < 3:
+    raise SystemExit("ASSERT FAIL: expected connectivity rules to be injected by default")
+if not any(isinstance(item, dict) and item.get("action") == "hijack-dns" for item in rules):
+    raise SystemExit("ASSERT FAIL: expected hijack-dns rule to be injected")
+if not any(
+    isinstance(item, dict)
+    and item.get("action") == "reject"
+    and any(isinstance(rule, dict) and rule.get("protocol") == "quic" for rule in item.get("rules", []))
+    for item in rules
+):
+    raise SystemExit("ASSERT FAIL: expected QUIC reject rule to be injected")
+if not any(isinstance(item, dict) and item.get("ip_is_private") is True for item in rules):
+    raise SystemExit("ASSERT FAIL: expected private ip direct rule to be injected")
 
 outbounds = cfg.get("outbounds", [])
 mapping = {item.get("tag"): item for item in outbounds if isinstance(item, dict)}
@@ -192,6 +203,22 @@ if hk.get("default") != "A-HongKong":
     raise SystemExit("ASSERT FAIL: HongKong default should be A-HongKong")
 if "A-HongKong" not in hk.get("outbounds", []) or "B-HongKong" not in hk.get("outbounds", []):
     raise SystemExit("ASSERT FAIL: HongKong should include A-HongKong and B-HongKong")
+a_hk = mapping.get("A-HongKong", {})
+if a_hk.get("type") != "urltest":
+    raise SystemExit("ASSERT FAIL: expected A-HongKong to be urltest")
+
+# Singapore/Japan should auto-pick the fastest node for each provider group by default.
+b_sg = mapping.get("B-Singapore", {})
+if b_sg.get("type") != "urltest":
+    raise SystemExit("ASSERT FAIL: expected B-Singapore to be urltest")
+a_jp = mapping.get("A-Japan", {})
+if a_jp.get("type") != "urltest":
+    raise SystemExit("ASSERT FAIL: expected A-Japan to be urltest")
+
+# America remains a manual selector group (not urltest).
+a_us = mapping.get("A-America", {})
+if a_us.get("type") != "selector":
+    raise SystemExit("ASSERT FAIL: expected A-America to remain selector")
 proxy = mapping.get("Proxy", {})
 if proxy.get("default") != "HongKong":
     raise SystemExit("ASSERT FAIL: Proxy default should follow group strategy default HongKong")
@@ -277,8 +304,17 @@ with open("./config.json", "r", encoding="utf-8") as f:
     cfg = json.load(f)
 
 rules = cfg.get("route", {}).get("rules", [])
-if len(rules) < 4:
-    raise SystemExit("ASSERT FAIL: expected generated route rules from build-rules")
+if len(rules) < 7:
+    raise SystemExit("ASSERT FAIL: expected generated route rules from build-rules + connectivity rules")
+if not any(isinstance(item, dict) and item.get("action") == "hijack-dns" for item in rules):
+    raise SystemExit("ASSERT FAIL: expected hijack-dns rule to be present")
+if not any(
+    isinstance(item, dict)
+    and item.get("action") == "reject"
+    and any(isinstance(rule, dict) and rule.get("protocol") == "quic" for rule in item.get("rules", []))
+    for item in rules
+):
+    raise SystemExit("ASSERT FAIL: expected QUIC reject rule to be present")
 
 tags = {item.get("tag") for item in cfg.get("outbounds", []) if isinstance(item, dict)}
 if "block" not in tags:

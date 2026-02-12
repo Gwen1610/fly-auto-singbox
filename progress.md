@@ -84,3 +84,11 @@
 - [x] 更新测试覆盖 `A/B` 双订阅来源与 `Streaming/AI` 分组。
 - [x] 完成验证（`bash -n fly`、`conda run -n yellow python -m py_compile ...`、`bash tests/test_pipeline.sh`）。
 - [x] 提交并 push 本轮“分层分组策略”改动。
+
+## Session 2026-02-12 (connectivity defaults + urltest regions)
+- [x] 将 `HongKong/Singapore/Japan` 的来源+地区子组默认调整为 `urltest`，`America` 保持 `selector`。
+- [x] `build-config` 注入连通性默认行为（sniff、hijack-dns、QUIC reject、DNS bootstrap 规则）。
+- [x] 更新 `tests/test_pipeline.sh`，增加 Singapore/Japan urltest 与 America selector 的断言。
+- [x] 新增 `docs/future-work.md`，整理后续优化空间。
+- [x] 更新 README，补充默认连通性注入说明与 Future Work 链接。
+- [x] 验证通过：`bash tests/test_pipeline.sh`、`sing-box check -c config.json`。

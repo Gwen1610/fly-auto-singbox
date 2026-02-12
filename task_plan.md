@@ -8,7 +8,7 @@
 4) `fly install-singbox` 自动下载并安装 Linux/mac 对应版本（当前会话仅 dry-run 验证，不实际下载）。
 
 ## Current Phase
-Phase 16
+Complete (Phase 17)
 
 ## Phases
 
@@ -126,6 +126,15 @@ Phase 16
 - [x] 测试覆盖双订阅来源 + 分层组生成 + 默认选择器校验
 - [x] 提交并 push
 - **Status:** complete
+
+### Phase 17: Connectivity Defaults + urltest Regions
+- [x] `build-config` 注入连通性默认行为（sniff、hijack-dns、QUIC reject、DNS bootstrap 规则）
+- [x] `HongKong/Singapore/Japan` 的来源+地区子组默认使用 `urltest`
+- [x] `America` 的来源+地区子组保持 `selector`
+- [x] 更新 README 与新增 `docs/future-work.md`
+- [x] 更新测试断言
+- [x] 完成验证并推送到 GitHub
+- **Status:** in_progress
 
 ## Errors Encountered
 | Error | Attempt | Resolution |

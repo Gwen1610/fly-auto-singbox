@@ -7,6 +7,21 @@ from collections import OrderedDict
 from copy import deepcopy
 from pathlib import Path
 
+URLTEST_REGIONS = {"HongKong", "Singapore", "Japan"}
+URLTEST_URL = "https://www.gstatic.com/generate_204"
+URLTEST_INTERVAL = "10m"
+
+GOOGLE_DNS_SUFFIXES = [
+    "google.com",
+    "gstatic.com",
+    "googleapis.com",
+    "googlevideo.com",
+    "1e100.net",
+    "youtube.com",
+    "ytimg.com",
+    "ggpht.com",
+]
+
 REGION_PATTERNS = OrderedDict(
     [
         (
@@ -250,6 +265,157 @@ def load_group_strategy(path: Path):
     }
 
 
+def is_ip_address(value: str) -> bool:
+    # Good enough for our config use: v4 literal or anything containing ':' treated as IP (v6).
+    text = str(value).strip()
+    if not text:
+        return False
+    if ":" in text:
+        return True
+    return bool(re.match(r"^\d+\.\d+\.\d+\.\d+$", text))
+
+
+def guess_domain_suffix(hostname: str) -> str:
+    text = str(hostname).strip().strip(".").lower()
+    if not text or is_ip_address(text) or "." not in text:
+        return ""
+    labels = [part for part in text.split(".") if part]
+    if len(labels) < 2:
+        return ""
+    tld = labels[-1]
+    sld = labels[-2]
+    if len(tld) == 2 and sld in {"com", "net", "org", "gov", "edu", "co"} and len(labels) >= 3:
+        return ".".join(labels[-3:])
+    return ".".join(labels[-2:])
+
+
+def collect_node_domain_suffixes(outbounds):
+    suffixes = set()
+    for item in outbounds:
+        if not isinstance(item, dict):
+            continue
+        server = item.get("server")
+        if not isinstance(server, str):
+            continue
+        suffix = guess_domain_suffix(server)
+        if suffix:
+            suffixes.add(suffix)
+    return sorted(suffixes)
+
+
+def ensure_inbound_sniff(config):
+    inbounds = config.get("inbounds", [])
+    if not isinstance(inbounds, list):
+        return
+    for inbound in inbounds:
+        if not isinstance(inbound, dict):
+            continue
+        if inbound.get("type") not in {"tun", "mixed"}:
+            continue
+        inbound.setdefault("sniff", True)
+        inbound.setdefault("sniff_override_destination", True)
+
+
+def upsert_dns_server(servers, tag: str, desired: dict):
+    for item in servers:
+        if isinstance(item, dict) and item.get("tag") == tag:
+            item.clear()
+            item.update(deepcopy(desired))
+            return
+    servers.append(deepcopy(desired))
+
+
+def ensure_connectivity_dns(config, outbounds):
+    dns = config.get("dns")
+    if not isinstance(dns, dict):
+        dns = {}
+        config["dns"] = dns
+
+    servers = dns.get("servers")
+    if not isinstance(servers, list):
+        servers = []
+        dns["servers"] = servers
+
+    upsert_dns_server(
+        servers,
+        "google",
+        {"tag": "google", "type": "tls", "server": "8.8.8.8", "detour": "Proxy"},
+    )
+    upsert_dns_server(servers, "local", {"tag": "local", "type": "udp", "server": "223.5.5.5"})
+
+    dns.setdefault("final", "local")
+    dns.setdefault("strategy", "ipv4_only")
+
+    rules = dns.get("rules")
+    if not isinstance(rules, list):
+        rules = []
+        dns["rules"] = rules
+
+    node_suffixes = collect_node_domain_suffixes(outbounds)
+    prefix_rules = []
+
+    if node_suffixes:
+        prefix_rules.append(
+            {
+                "type": "logical",
+                "mode": "or",
+                "rules": [{"domain_suffix": suffix} for suffix in node_suffixes],
+                "server": "local",
+            }
+        )
+    prefix_rules.append(
+        {
+            "type": "logical",
+            "mode": "or",
+            "rules": [{"domain_suffix": suffix} for suffix in GOOGLE_DNS_SUFFIXES],
+            "server": "google",
+        }
+    )
+
+    # Avoid repeatedly injecting when users run build-config multiple times.
+    existing = json.dumps(rules, ensure_ascii=False, sort_keys=True)
+    inject = []
+    for item in prefix_rules:
+        if json.dumps(item, ensure_ascii=False, sort_keys=True) not in existing:
+            inject.append(item)
+
+    if inject:
+        dns["rules"] = [*inject, *rules]
+
+
+def ensure_connectivity_route(config, user_rules):
+    route = config.get("route")
+    if not isinstance(route, dict):
+        route = {}
+        config["route"] = route
+
+    route.setdefault("default_domain_resolver", {"server": "local"})
+
+    base_rules = [
+        {
+            "type": "logical",
+            "mode": "or",
+            "rules": [{"protocol": "dns"}, {"port": 53}],
+            "action": "hijack-dns",
+        },
+        {
+            "type": "logical",
+            "mode": "or",
+            "rules": [{"protocol": "quic"}, {"network": "udp", "port": 443}],
+            "action": "reject",
+        },
+        {"ip_is_private": True, "outbound": "direct"},
+    ]
+
+    combined = []
+    existing = json.dumps(user_rules, ensure_ascii=False, sort_keys=True)
+    for item in base_rules:
+        if json.dumps(item, ensure_ascii=False, sort_keys=True) not in existing:
+            combined.append(item)
+    combined.extend(user_rules)
+    return combined
+
+
 def build_outbounds(grouped, strategy):
     selectors = []
     node_outbounds = []
@@ -265,14 +431,25 @@ def build_outbounds(grouped, strategy):
                 continue
 
             source_region_tag = make_provider_region_tag(provider, region)
-            selectors.append(
-                {
-                    "tag": source_region_tag,
-                    "type": "selector",
-                    "outbounds": node_tags,
-                    "default": node_tags[0],
-                }
-            )
+            if region in URLTEST_REGIONS:
+                selectors.append(
+                    {
+                        "tag": source_region_tag,
+                        "type": "urltest",
+                        "outbounds": node_tags,
+                        "url": URLTEST_URL,
+                        "interval": URLTEST_INTERVAL,
+                    }
+                )
+            else:
+                selectors.append(
+                    {
+                        "tag": source_region_tag,
+                        "type": "selector",
+                        "outbounds": node_tags,
+                        "default": node_tags[0],
+                    }
+                )
             available_selector_tags.add(source_region_tag)
             provider_groups.append(source_region_tag)
             node_outbounds.extend(strip_internal_fields(node) for node in nodes)
@@ -428,11 +605,13 @@ def build_config(base_template, outbounds, final_outbound, rules):
             existing_tags.add(tag)
 
     route_base["final"] = final_outbound
-    route_base["rules"] = rules
+    route_base["rules"] = ensure_connectivity_route(config, rules)
     route_base["rule_set"] = existing_rule_sets
 
     config["outbounds"] = outbounds
     config["route"] = route_base
+    ensure_inbound_sniff(config)
+    ensure_connectivity_dns(config, outbounds)
     return config
 
 
