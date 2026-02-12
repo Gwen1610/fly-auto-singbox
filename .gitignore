@@ -1,4 +1,8 @@
 build/
 state/
-config/
+config/fly.env
+config/extract.providers.json
 *.log
+.sing-box.pid
+__pycache__/
+*.pyc

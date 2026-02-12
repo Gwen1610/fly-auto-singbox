@@ -1,14 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-FLY_VERSION="0.1.0"
+FLY_VERSION="0.2.0"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG_DIR="${ROOT_DIR}/config"
 BUILD_DIR="${ROOT_DIR}/build"
-STATE_DIR="${ROOT_DIR}/state"
+SCRIPTS_DIR="${ROOT_DIR}/scripts"
 ENV_FILE="${CONFIG_DIR}/fly.env"
-GROUPS_FILE="${CONFIG_DIR}/groups.json"
-ROUTES_FILE="${CONFIG_DIR}/routes.json"
+ENV_EXAMPLE_FILE="${CONFIG_DIR}/fly.env.example"
+PROVIDERS_FILE="${CONFIG_DIR}/extract.providers.json"
+PROVIDERS_EXAMPLE_FILE="${CONFIG_DIR}/extract.providers.example.json"
 
 log() {
   printf '[fly] %s\n' "$*"
@@ -34,86 +35,117 @@ is_true() {
   esac
 }
 
+abs_path() {
+  local path="$1"
+  if [[ "${path}" = /* ]]; then
+    printf '%s\n' "${path}"
+  else
+    printf '%s\n' "${ROOT_DIR}/${path#./}"
+  fi
+}
+
 usage() {
   cat <<'EOF'
-Fly - auto sing-box bootstrap toolkit
+Fly - decoupled sing-box pipeline
 
 Usage:
   ./fly init [--force]
-  ./fly apply [--dry-run]
-  ./fly proxy-hooks-install
+  ./fly install-guide
+  ./fly extract
+  ./fly build-config
+  ./fly pipeline
+  ./fly on
+  ./fly off
   ./fly status
-  ./fly logs [-f] [-n lines]
-  ./fly rollback
+  ./fly log [-n lines] [--no-follow]
   ./fly help
 
 Command summary:
-  init       Create config templates under ./config (--force to overwrite)
-  apply      Build config from subscription + groups + routes, then deploy
-  proxy-hooks-install  Install fly_on/fly_off/fly_status shell functions system-wide
-  status     Show current sing-box and service status
-  logs       Show service logs (journalctl)
-  rollback   Restore previous config snapshot and restart service
-  help       Show this help
+  init          Create local runtime config files from templates
+  install-guide Print manual sing-box download/install commands (no auto install)
+  extract       Use sing-box-subscribe to extract region nodes only (no route rules)
+  build-config  Build final config.json by injecting route rules into extracted nodes
+  pipeline      Run extract + build-config
+  on            Start sing-box in background (nohup + PID file)
+  off           Stop sing-box using PID file (with pkill fallback)
+  status        Show running status from PID file
+  log           Tail sing-box log file
+  help          Show this help
 EOF
 }
 
 backup_existing_file() {
-  local target_file="$1"
-  [[ -f "${target_file}" ]] || return 0
-  mkdir -p "${STATE_DIR}"
-  local base_name
-  base_name="$(basename "${target_file}")"
-  local backup_file="${STATE_DIR}/${base_name}.bak.$(date +%Y%m%d%H%M%S)"
-  cp "${target_file}" "${backup_file}"
-  log "backup ${target_file} -> ${backup_file}"
+  local file="$1"
+  [[ -f "${file}" ]] || return 0
+  mkdir -p "${BUILD_DIR}/backup"
+  local backup_file="${BUILD_DIR}/backup/$(basename "${file}").bak.$(date +%Y%m%d%H%M%S)"
+  cp "${file}" "${backup_file}"
+  log "backup ${file} -> ${backup_file}"
 }
 
-proxy_hook_target_file() {
-  if [[ -n "${FLY_PROXY_HOOK_FILE:-}" ]]; then
-    printf '%s\n' "${FLY_PROXY_HOOK_FILE}"
+load_env() {
+  if [[ -f "${ENV_FILE}" ]]; then
+    # shellcheck disable=SC1090
+    source "${ENV_FILE}"
   else
-    printf '%s\n' "/etc/profile.d/fly-proxy.sh"
+    warn "missing ${ENV_FILE}; using built-in defaults (run ./fly init to generate files)"
+  fi
+
+  : "${SUBSCRIBE_DIR:=../sing-box-subscribe}"
+  : "${PYTHON_BIN:=python3}"
+  : "${SING_BOX_BIN:=sing-box}"
+  if [[ -z "${SUDO_BIN+x}" ]]; then
+    SUDO_BIN="sudo"
+  fi
+  : "${EXTRACT_PROVIDERS_FILE:=./config/extract.providers.json}"
+  : "${NODES_FILE:=./build/nodes.json}"
+  : "${ROUTE_RULES_FILE:=./config/route-rules.json}"
+  : "${BASE_TEMPLATE_FILE:=./config/base-template.json}"
+  : "${CONFIG_JSON:=./config.json}"
+  : "${PID_FILE:=./.sing-box.pid}"
+  : "${LOG_FILE:=./sing-box.log}"
+  : "${SINGBOX_VERSION:=1.12.20}"
+
+  SUBSCRIBE_DIR="$(abs_path "${SUBSCRIBE_DIR}")"
+  EXTRACT_PROVIDERS_FILE="$(abs_path "${EXTRACT_PROVIDERS_FILE}")"
+  NODES_FILE="$(abs_path "${NODES_FILE}")"
+  ROUTE_RULES_FILE="$(abs_path "${ROUTE_RULES_FILE}")"
+  BASE_TEMPLATE_FILE="$(abs_path "${BASE_TEMPLATE_FILE}")"
+  CONFIG_JSON="$(abs_path "${CONFIG_JSON}")"
+  PID_FILE="$(abs_path "${PID_FILE}")"
+  LOG_FILE="$(abs_path "${LOG_FILE}")"
+}
+
+run_as_sudo() {
+  if [[ -n "${SUDO_BIN}" ]]; then
+    "${SUDO_BIN}" "$@"
+  else
+    "$@"
   fi
 }
 
-install_proxy_shell_hooks() {
-  local proxy_host="$1"
-  local proxy_port="$2"
-  local hook_file
-  hook_file="$(proxy_hook_target_file)"
-  local hook_dir
-  hook_dir="$(dirname "${hook_file}")"
-
-  if [[ ("${hook_file}" == /etc/* || "${hook_file}" == /usr/*) && "${EUID}" -ne 0 ]]; then
-    die "installing proxy hooks to ${hook_file} requires root"
+ensure_sudo_ticket() {
+  if [[ -n "${SUDO_BIN}" ]]; then
+    "${SUDO_BIN}" -v
   fi
-
-  install -d "${hook_dir}"
-  cat > "${hook_file}" <<EOF
-# shellcheck shell=sh
-
-fly_on() {
-  export ALL_PROXY="socks5://${proxy_host}:${proxy_port}"
-  export HTTP_PROXY="http://${proxy_host}:${proxy_port}"
-  export HTTPS_PROXY="http://${proxy_host}:${proxy_port}"
-  export all_proxy="\${ALL_PROXY}"
-  export http_proxy="\${HTTP_PROXY}"
-  export https_proxy="\${HTTPS_PROXY}"
-  echo "[fly-proxy] ON -> \${ALL_PROXY}"
 }
 
-fly_off() {
-  unset ALL_PROXY HTTP_PROXY HTTPS_PROXY all_proxy http_proxy https_proxy
-  echo "[fly-proxy] OFF"
+pid_is_alive() {
+  local pid="$1"
+  [[ "${pid}" =~ ^[0-9]+$ ]] || return 1
+  if [[ -n "${SUDO_BIN}" ]]; then
+    "${SUDO_BIN}" kill -0 "${pid}" >/dev/null 2>&1
+  else
+    kill -0 "${pid}" >/dev/null 2>&1
+  fi
 }
 
-fly_status() {
-  env | grep -E '^(ALL_PROXY|HTTP_PROXY|HTTPS_PROXY|all_proxy|http_proxy|https_proxy)=' || echo "[fly-proxy] OFF"
-}
-EOF
-  chmod 644 "${hook_file}"
-  log "installed proxy hooks: ${hook_file}"
+read_pid_file() {
+  [[ -f "${PID_FILE}" ]] || return 1
+  local pid
+  pid="$(cat "${PID_FILE}" 2>/dev/null || true)"
+  [[ "${pid}" =~ ^[0-9]+$ ]] || return 1
+  printf '%s\n' "${pid}"
 }
 
 init_files() {
@@ -126,983 +158,208 @@ init_files() {
     shift
   done
 
-  mkdir -p "${CONFIG_DIR}" "${BUILD_DIR}" "${STATE_DIR}"
+  mkdir -p "${CONFIG_DIR}" "${BUILD_DIR}" "${SCRIPTS_DIR}"
+
+  if [[ ! -f "${ENV_EXAMPLE_FILE}" ]]; then
+    die "missing template: ${ENV_EXAMPLE_FILE}"
+  fi
+  if [[ ! -f "${PROVIDERS_EXAMPLE_FILE}" ]]; then
+    die "missing template: ${PROVIDERS_EXAMPLE_FILE}"
+  fi
 
   if [[ ! -f "${ENV_FILE}" ]] || is_true "${force}"; then
-    if [[ -f "${ENV_FILE}" ]] && is_true "${force}"; then
+    if [[ -f "${ENV_FILE}" ]]; then
       backup_existing_file "${ENV_FILE}"
     fi
-    cat > "${ENV_FILE}" <<'EOF'
-# Required: set one of SUBSCRIPTION_URL or SUBSCRIPTION_FILE.
-SUBSCRIPTION_URL=""
-SUBSCRIPTION_FILE=""
-
-# Supported values:
-# - auto (recommended): auto-detect source format.
-# - singbox: SUBSCRIPTION_URL directly returns sing-box JSON with "outbounds".
-# - clash/v2ray: convert via SUBCONVERTER_URL.
-SUBSCRIPTION_FORMAT="auto"
-SUBCONVERTER_URL="http://127.0.0.1:25500/sub"
-# Optional image override for auto-start local subconverter.
-SUBCONVERTER_IMAGE="docker.1ms.run/tindy2013/subconverter:latest"
-# Auto-start local subconverter when SUBCONVERTER_URL points to 127.0.0.1/localhost.
-SUBCONVERTER_AUTO_START_LOCAL="true"
-# If docker is not installed, allow fly to auto-install it for local subconverter.
-SUBCONVERTER_AUTO_INSTALL_DOCKER="true"
-
-# Install and runtime
-SINGBOX_VERSION="1.12.20"
-INSTALL_DIR="/usr/local/bin"
-CONFIG_PATH="/etc/sing-box/config.json"
-SERVICE_NAME="sing-box"
-
-# Generated config defaults
-INBOUND_LISTEN="127.0.0.1"
-INBOUND_MIXED_PORT="7890"
-LOG_LEVEL="info"
-FINAL_OUTBOUND="proxy"
-CHECK_URL="https://www.gstatic.com/generate_204"
-# Compatibility toggle for sing-box 1.12 special outbounds validation.
-ENABLE_DEPRECATED_SPECIAL_OUTBOUNDS="true"
-EOF
-    if is_true "${force}" && [[ -f "${ENV_FILE}" ]]; then
-      log "overwritten ${ENV_FILE}"
-    else
-      log "created ${ENV_FILE}"
-    fi
+    cp "${ENV_EXAMPLE_FILE}" "${ENV_FILE}"
+    log "generated ${ENV_FILE}"
   else
     log "exists ${ENV_FILE}, skip"
   fi
 
-  if [[ ! -f "${GROUPS_FILE}" ]] || is_true "${force}"; then
-    if [[ -f "${GROUPS_FILE}" ]] && is_true "${force}"; then
-      backup_existing_file "${GROUPS_FILE}"
+  if [[ ! -f "${PROVIDERS_FILE}" ]] || is_true "${force}"; then
+    if [[ -f "${PROVIDERS_FILE}" ]]; then
+      backup_existing_file "${PROVIDERS_FILE}"
     fi
-    cat > "${GROUPS_FILE}" <<'EOF'
-[
-  {
-    "tag": "all-proxies",
-    "type": "selector",
-    "include_regex": ".*"
-  },
-  {
-    "tag": "hk-auto",
-    "type": "urltest",
-    "include_regex": "((^|[^a-z])(hk|hong kong|hongkong)($|[^a-z])|香港|港线|港線)",
-    "allow_empty": true,
-    "url": "https://www.gstatic.com/generate_204",
-    "interval": "5m",
-    "tolerance": 50
-  },
-  {
-    "tag": "hk-proxy",
-    "type": "selector",
-    "members": ["hk-auto", "all-proxies", "direct"]
-  },
-  {
-    "tag": "us-auto",
-    "type": "urltest",
-    "include_regex": "((^|[^a-z])(us|usa|united states|america|la|los angeles|sjc|sfo|sea|ny|new york)($|[^a-z])|美国|美國|美西|美东|美東|洛杉矶|洛杉磯|纽约|紐約|西雅图|西雅圖|圣何塞|聖何塞|旧金山|舊金山)",
-    "allow_empty": true,
-    "url": "https://www.gstatic.com/generate_204",
-    "interval": "5m",
-    "tolerance": 50
-  },
-  {
-    "tag": "us-proxy",
-    "type": "selector",
-    "members": ["us-auto", "all-proxies", "direct"]
-  },
-  {
-    "tag": "jp-auto",
-    "type": "urltest",
-    "include_regex": "((^|[^a-z])(jp|japan|tokyo|osaka)($|[^a-z])|日本|东京|東京|大阪|日線|日线)",
-    "allow_empty": true,
-    "url": "https://www.gstatic.com/generate_204",
-    "interval": "5m",
-    "tolerance": 50
-  },
-  {
-    "tag": "jp-proxy",
-    "type": "selector",
-    "members": ["jp-auto", "all-proxies", "direct"]
-  },
-  {
-    "tag": "kr-auto",
-    "type": "urltest",
-    "include_regex": "((^|[^a-z])(kr|korea|south korea|seoul)($|[^a-z])|韩国|韓國|首尔|首爾|韩线|韓線)",
-    "allow_empty": true,
-    "url": "https://www.gstatic.com/generate_204",
-    "interval": "5m",
-    "tolerance": 50
-  },
-  {
-    "tag": "kr-proxy",
-    "type": "selector",
-    "members": ["kr-auto", "all-proxies", "direct"]
-  },
-  {
-    "tag": "sg-auto",
-    "type": "urltest",
-    "include_regex": "((^|[^a-z])(sg|singapore)($|[^a-z])|新加坡|獅城|狮城|新線|新线)",
-    "allow_empty": true,
-    "url": "https://www.gstatic.com/generate_204",
-    "interval": "5m",
-    "tolerance": 50
-  },
-  {
-    "tag": "sg-proxy",
-    "type": "selector",
-    "members": ["sg-auto", "all-proxies", "direct"]
-  },
-  {
-    "tag": "proxy",
-    "type": "selector",
-    "members": ["us-proxy", "hk-proxy", "jp-proxy", "kr-proxy", "sg-proxy", "all-proxies", "direct"]
-  }
-]
-EOF
-    if is_true "${force}" && [[ -f "${GROUPS_FILE}" ]]; then
-      log "overwritten ${GROUPS_FILE}"
-    else
-      log "created ${GROUPS_FILE}"
-    fi
+    cp "${PROVIDERS_EXAMPLE_FILE}" "${PROVIDERS_FILE}"
+    log "generated ${PROVIDERS_FILE}"
   else
-    log "exists ${GROUPS_FILE}, skip"
+    log "exists ${PROVIDERS_FILE}, skip"
   fi
 
-  if [[ ! -f "${ROUTES_FILE}" ]] || is_true "${force}"; then
-    if [[ -f "${ROUTES_FILE}" ]] && is_true "${force}"; then
-      backup_existing_file "${ROUTES_FILE}"
-    fi
-    cat > "${ROUTES_FILE}" <<'EOF'
-{
-  "final": "proxy",
-  "rules": [
-    {
-      "domain_suffix": [
-        "openai.com",
-        "chatgpt.com",
-        "oaistatic.com",
-        "claude.ai",
-        "anthropic.com",
-        "gemini.google.com",
-        "aistudio.google.com",
-        "ai.google.dev",
-        "generativelanguage.googleapis.com",
-        "perplexity.ai",
-        "perplexity.com",
-        "x.ai",
-        "grok.com",
-        "cursor.com",
-        "cursor.sh",
-        "githubcopilot.com",
-        "copilot.microsoft.com"
-      ],
-      "outbound": "us-proxy"
-    },
-    {
-      "domain_suffix": [
-        "google.com",
-        "googleapis.com",
-        "gstatic.com",
-        "ggpht.com",
-        "youtube.com",
-        "googlevideo.com",
-        "ytimg.com"
-      ],
-      "outbound": "hk-proxy"
-    }
-  ]
-}
-EOF
-    if is_true "${force}" && [[ -f "${ROUTES_FILE}" ]]; then
-      log "overwritten ${ROUTES_FILE}"
-    else
-      log "created ${ROUTES_FILE}"
-    fi
-  else
-    log "exists ${ROUTES_FILE}, skip"
-  fi
-
-  log "init complete. Edit ${ENV_FILE}, ${GROUPS_FILE}, ${ROUTES_FILE}, then run: ./fly apply"
+  log "init complete"
 }
 
-load_env() {
-  [[ -f "${ENV_FILE}" ]] || die "missing ${ENV_FILE}, run ./fly init first"
-  # shellcheck disable=SC1090
-  source "${ENV_FILE}"
-  : "${SUBSCRIPTION_URL:=}"
-  : "${SUBSCRIPTION_FILE:=}"
-  : "${SUBSCRIPTION_FORMAT:=auto}"
-  : "${SUBCONVERTER_URL:=http://127.0.0.1:25500/sub}"
-  : "${SUBCONVERTER_IMAGE:=docker.1ms.run/tindy2013/subconverter:latest}"
-  : "${SUBCONVERTER_AUTO_START_LOCAL:=true}"
-  : "${SUBCONVERTER_AUTO_INSTALL_DOCKER:=true}"
-  : "${SINGBOX_VERSION:=1.12.20}"
-  : "${INSTALL_DIR:=/usr/local/bin}"
-  : "${CONFIG_PATH:=/etc/sing-box/config.json}"
-  : "${SERVICE_NAME:=sing-box}"
-  : "${INBOUND_LISTEN:=127.0.0.1}"
-  : "${INBOUND_MIXED_PORT:=7890}"
-  : "${LOG_LEVEL:=info}"
-  : "${FINAL_OUTBOUND:=proxy}"
-  : "${CHECK_URL:=https://www.gstatic.com/generate_204}"
-  : "${ENABLE_DEPRECATED_SPECIAL_OUTBOUNDS:=true}"
-}
-
-abs_path() {
-  local path="$1"
-  if [[ "${path}" = /* ]]; then
-    printf '%s\n' "${path}"
-  else
-    printf '%s\n' "${ROOT_DIR}/${path}"
-  fi
-}
-
-url_encode() {
-  local value="$1"
-  python3 - "$value" <<'PY'
-import sys
-from urllib.parse import quote
-print(quote(sys.argv[1], safe=""))
-PY
-}
-
-validate_subscription_json() {
-  local input_file="$1"
-  python3 - "${input_file}" <<'PY'
-import json
-import sys
-from pathlib import Path
-
-path = Path(sys.argv[1])
-try:
-    data = json.loads(path.read_text(encoding="utf-8"))
-except Exception as exc:
-    raise SystemExit(f"invalid subscription JSON: {exc}") from exc
-
-outbounds = data.get("outbounds")
-if not isinstance(outbounds, list) or not outbounds:
-    raise SystemExit("subscription JSON must contain non-empty outbounds[]")
-
-for item in outbounds:
-    tag = item.get("tag") if isinstance(item, dict) else None
-    if not isinstance(tag, str) or not tag.strip():
-        raise SystemExit("every outbound in subscription must contain string tag")
-PY
-}
-
-detect_subscription_content_kind() {
-  local input_file="$1"
-  python3 - "${input_file}" <<'PY'
-import base64
-import json
-import re
-import sys
-from pathlib import Path
-
-text = Path(sys.argv[1]).read_text(encoding="utf-8", errors="ignore").strip()
-if not text:
-    print("empty")
-    raise SystemExit(0)
-
-try:
-    data = json.loads(text)
-    if isinstance(data, dict) and isinstance(data.get("outbounds"), list):
-        print("singbox_json")
-        raise SystemExit(0)
-except Exception:
-    pass
-
-lower_text = text.lower()
-if "<html" in lower_text[:300]:
-    print("html")
-    raise SystemExit(0)
-
-if "proxies:" in lower_text or "proxy-providers:" in lower_text:
-    print("clash")
-    raise SystemExit(0)
-
-uri_pat = re.compile(r"(ss|vmess|vless|trojan|hysteria2?|tuic)://", re.IGNORECASE)
-if uri_pat.search(text):
-    print("uri")
-    raise SystemExit(0)
-
-compact = "".join(text.split())
-if compact and re.fullmatch(r"[A-Za-z0-9+/=]+", compact):
-    try:
-        decoded = base64.b64decode(compact, validate=True).decode("utf-8", errors="ignore")
-        if uri_pat.search(decoded):
-            print("uri_b64")
-            raise SystemExit(0)
-        print("unknown_b64")
-        raise SystemExit(0)
-    except Exception:
-        pass
-
-print("unknown")
-PY
-}
-
-normalize_subconverter_url() {
-  if [[ -z "${SUBCONVERTER_URL}" ]]; then
-    SUBCONVERTER_URL="http://127.0.0.1:25500/sub"
-  fi
-  if [[ "${SUBCONVERTER_URL}" != */sub ]]; then
-    SUBCONVERTER_URL="${SUBCONVERTER_URL%/}/sub"
-  fi
-}
-
-subconverter_base_url() {
-  normalize_subconverter_url
-  printf '%s\n' "${SUBCONVERTER_URL%/sub}"
-}
-
-url_reachable() {
-  local url="$1"
-  curl -sS -o /dev/null --max-time 4 "${url}"
-}
-
-is_local_subconverter_target() {
-  local base_url
-  base_url="$(subconverter_base_url)"
-  [[ "${base_url}" =~ ^https?://(127\.0\.0\.1|localhost)(:[0-9]+)?$ ]]
-}
-
-ensure_docker_for_subconverter() {
-  if command -v docker >/dev/null 2>&1; then
-    return 0
-  fi
-
-  if ! is_true "${SUBCONVERTER_AUTO_INSTALL_DOCKER:-false}"; then
-    die "docker not found; install it manually or set SUBCONVERTER_AUTO_INSTALL_DOCKER=true to let fly install it automatically"
-  fi
-
-  require_root
-  if command -v apt-get >/dev/null 2>&1; then
-    log "docker not found; installing docker.io via apt"
-    apt-get update -y
-    apt-get install -y docker.io
-  elif command -v dnf >/dev/null 2>&1; then
-    log "docker not found; installing docker via dnf"
-    dnf install -y docker
-  elif command -v yum >/dev/null 2>&1; then
-    log "docker not found; installing docker via yum"
-    yum install -y docker
-  else
-    die "docker is required to auto-start local subconverter, but no supported package manager found"
-  fi
-}
-
-start_local_subconverter_container() {
-  ensure_docker_for_subconverter
-
-  if command -v systemctl >/dev/null 2>&1; then
-    systemctl enable --now docker >/dev/null 2>&1 || true
-  fi
-
-  if docker ps --format '{{.Names}}' | grep -qx 'subconverter'; then
-    return 0
-  fi
-
-  if docker ps -a --format '{{.Names}}' | grep -qx 'subconverter'; then
-    docker start subconverter >/dev/null
-    return 0
-  fi
-
-  local images=(
-    "${SUBCONVERTER_IMAGE}"
-    "docker.1ms.run/tindy2013/subconverter:latest"
-    "tindy2013/subconverter:latest"
-  )
-  local image
-  for image in "${images[@]}"; do
-    [[ -n "${image}" ]] || continue
-    if docker run -d \
-      --name subconverter \
-      --restart unless-stopped \
-      -p 25500:25500 \
-      "${image}" >/dev/null 2>&1; then
-      log "started local subconverter container using image ${image}"
-      return 0
-    fi
-  done
-
-  die "failed to start local subconverter container; set SUBCONVERTER_URL to a reachable converter endpoint"
-}
-
-ensure_subconverter_ready() {
-  local allow_autostart="${1:-true}"
-  local base_url
-  base_url="$(subconverter_base_url)"
-  if url_reachable "${base_url}"; then
-    return 0
-  fi
-
-  if ! is_local_subconverter_target; then
-    die "SUBCONVERTER_URL is unreachable: ${SUBCONVERTER_URL}"
-  fi
-
-  if ! is_true "${allow_autostart}"; then
-    die "local subconverter is unreachable at ${base_url}; dry-run will not auto-start it. start it manually or set SUBCONVERTER_URL to a reachable converter endpoint"
-  fi
-
-  if ! is_true "${SUBCONVERTER_AUTO_START_LOCAL:-true}"; then
-    die "local subconverter is unreachable at ${base_url}; auto-start disabled (SUBCONVERTER_AUTO_START_LOCAL=false). start it manually or set SUBCONVERTER_URL to a reachable converter endpoint"
-  fi
-
-  log "local subconverter not reachable; attempting auto-start"
-  start_local_subconverter_container
-
-  local attempt
-  for attempt in $(seq 1 20); do
-    if url_reachable "${base_url}"; then
-      log "local subconverter is ready at ${SUBCONVERTER_URL}"
-      return 0
-    fi
-    sleep 1
-  done
-
-  die "local subconverter did not become ready at ${base_url}"
-}
-
-convert_subscription_via_subconverter() {
-  local source_url="$1"
-  local output_file="$2"
-  local allow_autostart="${3:-true}"
-  ensure_subconverter_ready "${allow_autostart}"
-  local encoded_url
-  encoded_url="$(url_encode "${source_url}")"
-  curl -fsSL "${SUBCONVERTER_URL}?target=singbox&url=${encoded_url}" -o "${output_file}"
-  validate_subscription_json "${output_file}"
-}
-
-fetch_subscription_json() {
-  local output_file="$1"
-  local allow_subconverter_autostart="${2:-true}"
-  mkdir -p "$(dirname "${output_file}")"
-
-  if [[ -n "${SUBSCRIPTION_FILE}" ]]; then
-    local src
-    src="$(abs_path "${SUBSCRIPTION_FILE}")"
-    [[ -f "${src}" ]] || die "SUBSCRIPTION_FILE does not exist: ${src}"
-    cp "${src}" "${output_file}"
-    if [[ "${SUBSCRIPTION_FORMAT}" == "auto" ]]; then
-      local local_kind
-      local_kind="$(detect_subscription_content_kind "${output_file}")"
-      [[ "${local_kind}" == "singbox_json" ]] || die "SUBSCRIPTION_FILE with SUBSCRIPTION_FORMAT=auto must be sing-box JSON (detected: ${local_kind})"
-    elif [[ "${SUBSCRIPTION_FORMAT}" != "singbox" ]]; then
-      die "SUBSCRIPTION_FILE currently supports only singbox JSON input (set SUBSCRIPTION_FORMAT=auto or singbox)"
-    fi
-    validate_subscription_json "${output_file}"
-    return
-  fi
-
-  [[ -n "${SUBSCRIPTION_URL}" ]] || die "set SUBSCRIPTION_URL or SUBSCRIPTION_FILE in ${ENV_FILE}"
-  need_cmd curl
-
-  if [[ "${SUBSCRIPTION_FORMAT}" == "auto" ]]; then
-    local raw_file
-    raw_file="$(mktemp)"
-    curl -fsSL "${SUBSCRIPTION_URL}" -o "${raw_file}"
-
-    local detected_kind
-    detected_kind="$(detect_subscription_content_kind "${raw_file}")"
-    case "${detected_kind}" in
-      singbox_json)
-        mv "${raw_file}" "${output_file}"
-        validate_subscription_json "${output_file}"
-        return
-        ;;
-      clash|uri|uri_b64|unknown_b64|unknown)
-        log "auto-detected subscription kind: ${detected_kind}; converting with subconverter"
-        rm -f "${raw_file}"
-        convert_subscription_via_subconverter "${SUBSCRIPTION_URL}" "${output_file}" "${allow_subconverter_autostart}"
-        return
-        ;;
-      html)
-        rm -f "${raw_file}"
-        die "subscription URL returned HTML (likely auth/URL issue), cannot parse"
-        ;;
-      empty)
-        rm -f "${raw_file}"
-        die "subscription URL returned empty content"
-        ;;
-      *)
-        rm -f "${raw_file}"
-        die "unsupported auto-detected subscription content: ${detected_kind}"
-        ;;
-    esac
-  fi
-
-  case "${SUBSCRIPTION_FORMAT}" in
-    singbox)
-      curl -fsSL "${SUBSCRIPTION_URL}" -o "${output_file}"
-      ;;
-    clash|v2ray)
-      convert_subscription_via_subconverter "${SUBSCRIPTION_URL}" "${output_file}" "${allow_subconverter_autostart}"
-      ;;
-    *)
-      die "unsupported SUBSCRIPTION_FORMAT=${SUBSCRIPTION_FORMAT} (supported: auto, singbox, clash, v2ray)"
-      ;;
-  esac
-
-  validate_subscription_json "${output_file}"
-}
-
-render_config() {
-  local subscription_file="$1"
-  local output_file="$2"
-  python3 - "${subscription_file}" "${GROUPS_FILE}" "${ROUTES_FILE}" "${output_file}" \
-    "${INBOUND_LISTEN}" "${INBOUND_MIXED_PORT}" "${FINAL_OUTBOUND}" "${LOG_LEVEL}" <<'PY'
-import json
-import re
-import sys
-from pathlib import Path
-
-subscription_path = Path(sys.argv[1])
-groups_path = Path(sys.argv[2])
-routes_path = Path(sys.argv[3])
-output_path = Path(sys.argv[4])
-inbound_listen = sys.argv[5]
-inbound_port = int(sys.argv[6])
-final_outbound_default = sys.argv[7]
-log_level = sys.argv[8]
-
-subscription = json.loads(subscription_path.read_text(encoding="utf-8"))
-groups_cfg = json.loads(groups_path.read_text(encoding="utf-8"))
-routes_cfg = json.loads(routes_path.read_text(encoding="utf-8"))
-
-if not isinstance(groups_cfg, list):
-    raise SystemExit("groups.json must be an array")
-if not isinstance(routes_cfg, dict):
-    raise SystemExit("routes.json must be an object")
-
-subscription_outbounds = subscription.get("outbounds")
-if not isinstance(subscription_outbounds, list):
-    raise SystemExit("subscription must contain outbounds array")
-
-node_tags = []
-for item in subscription_outbounds:
-    if not isinstance(item, dict):
-        raise SystemExit("subscription outbounds must be objects")
-    tag = item.get("tag")
-    if not isinstance(tag, str) or not tag:
-        raise SystemExit("every subscription outbound must have a non-empty tag")
-    node_tags.append(tag)
-
-def dedupe(items):
-    seen = set()
-    ordered = []
-    for value in items:
-        if value not in seen:
-            ordered.append(value)
-            seen.add(value)
-    return ordered
-
-group_tags = []
-rendered_groups = []
-for group in groups_cfg:
-    if not isinstance(group, dict):
-        raise SystemExit("each group item must be an object")
-    tag = group.get("tag")
-    group_type = group.get("type")
-    if not isinstance(tag, str) or not tag:
-        raise SystemExit("group tag is required")
-    if group_type not in {"selector", "urltest"}:
-        raise SystemExit(f"group {tag}: type must be selector or urltest")
-
-    members = group.get("members")
-    if members is None:
-        include_regex = group.get("include_regex", ".*")
-        exclude_regex = group.get("exclude_regex")
-        try:
-            include_pat = re.compile(include_regex, re.IGNORECASE)
-            exclude_pat = re.compile(exclude_regex, re.IGNORECASE) if exclude_regex else None
-        except re.error as exc:
-            raise SystemExit(f"group {tag}: invalid regex: {exc}") from exc
-        members = []
-        for node_tag in node_tags:
-            if not include_pat.search(node_tag):
-                continue
-            if exclude_pat and exclude_pat.search(node_tag):
-                continue
-            members.append(node_tag)
-    if not isinstance(members, list):
-        raise SystemExit(f"group {tag}: members must be array")
-    members = [str(v) for v in members if str(v).strip()]
-    members = dedupe(members)
-
-    allow_empty = bool(group.get("allow_empty", False))
-    if not members and not allow_empty:
-        raise SystemExit(f"group {tag}: no members matched; set allow_empty=true to bypass")
-
-    rendered = {
-        "type": group_type,
-        "tag": tag,
-        "outbounds": members,
-    }
-    if group_type == "urltest":
-        rendered["url"] = group.get("url", "https://www.gstatic.com/generate_204")
-        rendered["interval"] = group.get("interval", "5m")
-        rendered["tolerance"] = int(group.get("tolerance", 50))
-    rendered_groups.append(rendered)
-    group_tags.append(tag)
-
-fixed_outbounds = [
-    {"type": "direct", "tag": "direct"},
-    {"type": "block", "tag": "block"},
-]
-
-all_tags = dedupe(node_tags + group_tags + [item["tag"] for item in fixed_outbounds])
-for group in rendered_groups:
-    for member in group["outbounds"]:
-        if member not in all_tags:
-            raise SystemExit(f"group {group['tag']}: unknown outbound member tag: {member}")
-
-route_rules = routes_cfg.get("rules", [])
-if not isinstance(route_rules, list):
-    raise SystemExit("routes.json rules must be an array")
-route_final = routes_cfg.get("final", final_outbound_default)
-if route_final not in all_tags:
-    raise SystemExit(f"route final outbound does not exist: {route_final}")
-
-tags_all_outbounds = [item["tag"] for item in subscription_outbounds + rendered_groups + fixed_outbounds]
-dup_tags = [tag for tag in sorted(set(tags_all_outbounds)) if tags_all_outbounds.count(tag) > 1]
-if dup_tags:
-    raise SystemExit(f"duplicate outbound tags detected: {', '.join(dup_tags)}")
-
-config = {
-    "log": {"level": log_level},
-    "dns": {
-        "servers": [
-            {"tag": "dns-direct", "address": "223.5.5.5", "detour": "direct"},
-            {"tag": "dns-remote", "address": "https://1.1.1.1/dns-query", "detour": route_final},
-        ]
-    },
-    "inbounds": [
-        {
-            "type": "mixed",
-            "tag": "mixed-in",
-            "listen": inbound_listen,
-            "listen_port": inbound_port,
-            "sniff": True,
-        }
-    ],
-    "outbounds": subscription_outbounds + rendered_groups + fixed_outbounds,
-    "route": {
-        "auto_detect_interface": True,
-        "final": route_final,
-        "rules": route_rules,
-    },
-}
-
-output_path.parent.mkdir(parents=True, exist_ok=True)
-output_path.write_text(json.dumps(config, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-PY
-}
-
-check_with_local_sing_box() {
-  local config_file="$1"
-  if command -v sing-box >/dev/null 2>&1; then
-    log "running local validation: sing-box check -c ${config_file}"
-    if is_true "${ENABLE_DEPRECATED_SPECIAL_OUTBOUNDS}"; then
-      ENABLE_DEPRECATED_SPECIAL_OUTBOUNDS=true sing-box check -c "${config_file}" >/dev/null
-    else
-      sing-box check -c "${config_file}" >/dev/null
-    fi
-  else
-    warn "sing-box not found locally; skipped local check (this is fine for first bootstrap)"
-  fi
-}
-
-require_root() {
-  if [[ "${EUID}" -ne 0 ]]; then
-    die "this command requires root. rerun with sudo."
-  fi
-}
-
-detect_arch() {
-  local machine
-  machine="$(uname -m)"
-  case "${machine}" in
-    x86_64|amd64) printf 'amd64\n' ;;
-    aarch64|arm64) printf 'arm64\n' ;;
-    *)
-      die "unsupported architecture: ${machine}"
-      ;;
-  esac
-}
-
-resolve_release_asset() {
-  local desired_version="$1"
-  local arch="$2"
-  local releases_file="$3"
-  python3 - "${desired_version}" "${arch}" "${releases_file}" <<'PY'
-import json
-import sys
-from pathlib import Path
-
-desired = sys.argv[1]
-arch = sys.argv[2]
-releases = json.loads(Path(sys.argv[3]).read_text(encoding="utf-8"))
-
-if not isinstance(releases, list):
-    raise SystemExit("unexpected releases API response")
-
-target = None
-if desired == "latest":
-    for rel in releases:
-        if not rel.get("prerelease"):
-            target = rel
-            break
-else:
-    desired_norm = desired.lstrip("v")
-    for rel in releases:
-        tag = str(rel.get("tag_name", "")).lstrip("v")
-        if tag == desired_norm:
-            target = rel
-            break
-
-if target is None:
-    raise SystemExit(f"cannot find release for version: {desired}")
-
-asset_url = ""
-for asset in target.get("assets", []):
-    name = str(asset.get("name", ""))
-    url = str(asset.get("browser_download_url", ""))
-    if f"linux-{arch}" in name and name.endswith(".tar.gz"):
-        asset_url = url
-        break
-
-if not asset_url:
-    raise SystemExit(f"no linux-{arch} .tar.gz asset found for release {target.get('tag_name')}")
-
-print(str(target.get("tag_name", "")))
-print(asset_url)
-PY
-}
-
-install_sing_box_if_needed() {
-  need_cmd curl
-  need_cmd tar
-  need_cmd install
-  need_cmd python3
-
-  local current_version=""
-  if command -v sing-box >/dev/null 2>&1; then
-    current_version="$(sing-box version 2>/dev/null | head -n 1 || true)"
-    if [[ "${SINGBOX_VERSION}" != "latest" ]] && [[ "${current_version}" == *"${SINGBOX_VERSION}"* ]]; then
-      log "sing-box already installed and matches version ${SINGBOX_VERSION}"
-      return
-    fi
-  fi
-
+cmd_install_guide() {
+  load_env
   local arch
-  arch="$(detect_arch)"
-  local tmp_dir
-  tmp_dir="$(mktemp -d)"
-  trap 'rm -rf "${tmp_dir:-}"' RETURN
+  case "$(uname -m)" in
+    x86_64|amd64) arch="amd64" ;;
+    aarch64|arm64) arch="arm64" ;;
+    *) arch="<amd64|arm64>" ;;
+  esac
 
-  local releases_file
-  releases_file="${tmp_dir}/releases.json"
-  curl -fsSL "https://api.github.com/repos/SagerNet/sing-box/releases" -o "${releases_file}"
+  cat <<EOF
+# Manual sing-box installation guide (same download path as old flow)
 
-  local release_meta
-  release_meta="$(resolve_release_asset "${SINGBOX_VERSION}" "${arch}" "${releases_file}")"
-  local release_tag asset_url
-  release_tag="$(printf '%s\n' "${release_meta}" | sed -n '1p')"
-  asset_url="$(printf '%s\n' "${release_meta}" | sed -n '2p')"
-  [[ -n "${asset_url}" ]] || die "failed to resolve sing-box release asset"
+VERSION="${SINGBOX_VERSION}"
+ARCH="${arch}"
 
-  local tarball
-  tarball="${tmp_dir}/sing-box.tar.gz"
-  log "downloading sing-box ${release_tag} (${arch})"
-  curl -fsSL "${asset_url}" -o "${tarball}"
+# 1) Download tarball from official GitHub Releases
+curl -fL "https://github.com/SagerNet/sing-box/releases/download/v\${VERSION}/sing-box-\${VERSION}-linux-\${ARCH}.tar.gz" -o /tmp/sing-box.tar.gz
 
-  tar -xzf "${tarball}" -C "${tmp_dir}"
-  local binary_path
-  binary_path="$(find "${tmp_dir}" -type f -name sing-box | head -n 1 || true)"
-  [[ -n "${binary_path}" ]] || die "cannot find sing-box binary in downloaded archive"
+# 2) Extract and install binary
+tar -xzf /tmp/sing-box.tar.gz -C /tmp
+sudo install -m 755 "\$(find /tmp -type f -name sing-box | head -n 1)" /usr/local/bin/sing-box
 
-  install -d "${INSTALL_DIR}"
-  install -m 755 "${binary_path}" "${INSTALL_DIR}/sing-box"
-  log "installed sing-box to ${INSTALL_DIR}/sing-box"
-  trap - RETURN
-  rm -rf "${tmp_dir:-}"
-}
-
-backup_current_config() {
-  local backup_file=""
-  mkdir -p "${STATE_DIR}"
-  if [[ -f "${CONFIG_PATH}" ]]; then
-    backup_file="${STATE_DIR}/config.backup.$(date +%Y%m%d%H%M%S).json"
-    cp "${CONFIG_PATH}" "${backup_file}"
-    printf '%s\n' "${backup_file}" > "${STATE_DIR}/last_backup_path"
-    log "backup created: ${backup_file}"
-  fi
-}
-
-install_systemd_service() {
-  need_cmd systemctl
-  local unit_file="/etc/systemd/system/${SERVICE_NAME}.service"
-  local sing_box_bin
-  sing_box_bin="$(command -v sing-box || true)"
-  [[ -n "${sing_box_bin}" ]] || die "sing-box binary not found in PATH after installation"
-
-  cat > "${unit_file}" <<EOF
-[Unit]
-Description=sing-box service managed by fly
-After=network.target
-Wants=network-online.target
-
-[Service]
-Type=simple
-ExecStart=${sing_box_bin} run -c ${CONFIG_PATH}
-Environment=ENABLE_DEPRECATED_SPECIAL_OUTBOUNDS=${ENABLE_DEPRECATED_SPECIAL_OUTBOUNDS}
-Restart=on-failure
-RestartSec=2
-LimitNOFILE=512000
-
-[Install]
-WantedBy=multi-user.target
+# 3) Verify
+sing-box version
 EOF
-
-  systemctl daemon-reload
-  systemctl enable --now "${SERVICE_NAME}"
-  systemctl restart "${SERVICE_NAME}"
-  systemctl is-active --quiet "${SERVICE_NAME}" || die "service ${SERVICE_NAME} is not active"
 }
 
-healthcheck_proxy() {
-  need_cmd curl
-  local proxy_url="socks5h://127.0.0.1:${INBOUND_MIXED_PORT}"
-  if curl -fsSL --max-time 15 --proxy "${proxy_url}" "${CHECK_URL}" >/dev/null 2>&1; then
-    log "healthcheck passed via ${proxy_url}"
+cmd_extract() {
+  load_env
+  need_cmd "${PYTHON_BIN}"
+  [[ -d "${SUBSCRIBE_DIR}" ]] || die "sing-box-subscribe directory not found: ${SUBSCRIBE_DIR}"
+  [[ -f "${SUBSCRIBE_DIR}/main.py" ]] || die "missing ${SUBSCRIBE_DIR}/main.py"
+  [[ -f "${EXTRACT_PROVIDERS_FILE}" ]] || die "missing providers config: ${EXTRACT_PROVIDERS_FILE}"
+
+  mkdir -p "$(dirname "${NODES_FILE}")"
+  "${PYTHON_BIN}" "${SCRIPTS_DIR}/extract_nodes.py" \
+    --subscribe-dir "${SUBSCRIBE_DIR}" \
+    --providers-file "${EXTRACT_PROVIDERS_FILE}" \
+    --output-file "${NODES_FILE}"
+  log "extracted nodes -> ${NODES_FILE}"
+}
+
+cmd_build_config() {
+  load_env
+  need_cmd "${PYTHON_BIN}"
+  [[ -f "${NODES_FILE}" ]] || die "missing nodes file: ${NODES_FILE} (run ./fly extract first)"
+  [[ -f "${ROUTE_RULES_FILE}" ]] || die "missing route rules file: ${ROUTE_RULES_FILE}"
+  [[ -f "${BASE_TEMPLATE_FILE}" ]] || die "missing base template: ${BASE_TEMPLATE_FILE}"
+
+  "${PYTHON_BIN}" "${SCRIPTS_DIR}/build_config.py" \
+    --nodes-file "${NODES_FILE}" \
+    --rules-file "${ROUTE_RULES_FILE}" \
+    --template-file "${BASE_TEMPLATE_FILE}" \
+    --output-file "${CONFIG_JSON}"
+  log "generated config -> ${CONFIG_JSON}"
+}
+
+cmd_pipeline() {
+  cmd_extract
+  cmd_build_config
+}
+
+cmd_on() {
+  load_env
+  [[ -f "${CONFIG_JSON}" ]] || die "missing ${CONFIG_JSON}; run ./fly build-config first"
+  need_cmd nohup
+  need_cmd "${SING_BOX_BIN}"
+
+  local old_pid=""
+  if old_pid="$(read_pid_file)" && pid_is_alive "${old_pid}"; then
+    printf 'already running (pid: %s)\n' "${old_pid}"
+    return 0
+  fi
+
+  ensure_sudo_ticket
+  mkdir -p "$(dirname "${PID_FILE}")" "$(dirname "${LOG_FILE}")"
+
+  local start_cmd
+  printf -v start_cmd 'nohup %q run -c %q > %q 2>&1 & echo $! > %q' \
+    "${SING_BOX_BIN}" "${CONFIG_JSON}" "${LOG_FILE}" "${PID_FILE}"
+
+  if [[ -n "${SUDO_BIN}" ]]; then
+    "${SUDO_BIN}" sh -c "${start_cmd}"
   else
-    warn "healthcheck failed via ${proxy_url}; service may still be running"
+    sh -c "${start_cmd}"
   fi
+
+  sleep 1
+  local new_pid
+  new_pid="$(read_pid_file || true)"
+  [[ -n "${new_pid}" ]] || die "failed to write PID file: ${PID_FILE}"
+  if ! pid_is_alive "${new_pid}"; then
+    die "process failed to start (pid=${new_pid}); check ${LOG_FILE}"
+  fi
+  printf 'started (pid: %s)\n' "${new_pid}"
+  printf 'log: %s\n' "${LOG_FILE}"
 }
 
-cmd_apply() {
-  local dry_run="false"
-  while [[ $# -gt 0 ]]; do
-    case "$1" in
-      --dry-run) dry_run="true" ;;
-      *) die "unknown flag for apply: $1" ;;
-    esac
-    shift
-  done
-
-  [[ -f "${GROUPS_FILE}" ]] || die "missing ${GROUPS_FILE}, run ./fly init first"
-  [[ -f "${ROUTES_FILE}" ]] || die "missing ${ROUTES_FILE}, run ./fly init first"
+cmd_off() {
   load_env
+  local stopped="false"
+  local pid=""
 
-  need_cmd python3
-  mkdir -p "${BUILD_DIR}" "${STATE_DIR}"
-
-  local subscription_json="${BUILD_DIR}/subscription.json"
-  local generated_config="${BUILD_DIR}/config.json"
-
-  local allow_subconverter_autostart="true"
-  if is_true "${dry_run}"; then
-    allow_subconverter_autostart="false"
-  fi
-  fetch_subscription_json "${subscription_json}" "${allow_subconverter_autostart}"
-  render_config "${subscription_json}" "${generated_config}"
-  check_with_local_sing_box "${generated_config}"
-
-  if is_true "${dry_run}"; then
-    log "dry-run complete: generated ${generated_config}"
-    exit 0
+  if pid="$(read_pid_file)" && pid_is_alive "${pid}"; then
+    run_as_sudo kill "${pid}" >/dev/null 2>&1 || true
+    local _i
+    for _i in 1 2 3 4 5; do
+      if ! pid_is_alive "${pid}"; then
+        break
+      fi
+      sleep 1
+    done
+    if pid_is_alive "${pid}"; then
+      run_as_sudo kill -9 "${pid}" >/dev/null 2>&1 || true
+    fi
+    stopped="true"
   fi
 
-  require_root
-  install_sing_box_if_needed
+  rm -f "${PID_FILE}"
 
-  install -d "$(dirname "${CONFIG_PATH}")"
-  backup_current_config
-  install -m 600 "${generated_config}" "${CONFIG_PATH}"
-  log "applied config to ${CONFIG_PATH}"
+  if [[ "${stopped}" != "true" ]]; then
+    if run_as_sudo pkill -f "sing-box run -c ${CONFIG_JSON}" >/dev/null 2>&1; then
+      stopped="true"
+    fi
+  fi
 
-  install_systemd_service
-  install_proxy_shell_hooks "127.0.0.1" "${INBOUND_MIXED_PORT}"
-  healthcheck_proxy
-
-  cp "${generated_config}" "${STATE_DIR}/last_applied_config.json"
-  log "apply complete. Use ./fly status and ./fly logs for verification."
-  log "shell proxy commands ready: source $(proxy_hook_target_file) then run fly_on / fly_status / fly_off"
-}
-
-cmd_proxy_hooks_install() {
-  load_env
-  install_proxy_shell_hooks "127.0.0.1" "${INBOUND_MIXED_PORT}"
-  log "to use in current shell now: source $(proxy_hook_target_file)"
+  if [[ "${stopped}" == "true" ]]; then
+    printf 'stopped\n'
+  else
+    printf 'not running\n'
+  fi
 }
 
 cmd_status() {
   load_env
-  if command -v sing-box >/dev/null 2>&1; then
-    sing-box version || true
+  local pid=""
+  if pid="$(read_pid_file)" && pid_is_alive "${pid}"; then
+    printf 'running (pid: %s)\n' "${pid}"
   else
-    warn "sing-box is not installed in PATH"
-  fi
-
-  if command -v systemctl >/dev/null 2>&1; then
-    systemctl --no-pager --full status "${SERVICE_NAME}" || true
-  else
-    warn "systemctl not available on this host"
-  fi
-
-  if [[ -f "${STATE_DIR}/last_applied_config.json" ]]; then
-    log "last applied config: ${STATE_DIR}/last_applied_config.json"
+    printf 'not running\n'
   fi
 }
 
-cmd_logs() {
+cmd_log() {
   load_env
-  local follow="false"
-  local lines="100"
-
+  local lines="200"
+  local follow="true"
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      -f|--follow) follow="true" ;;
       -n|--lines)
         shift
         [[ $# -gt 0 ]] || die "missing value for --lines"
         lines="$1"
         ;;
+      --no-follow)
+        follow="false"
+        ;;
       *)
-        die "unknown logs flag: $1"
+        die "unknown flag for log: $1"
         ;;
     esac
     shift
   done
 
-  need_cmd journalctl
+  [[ -f "${LOG_FILE}" ]] || die "missing log file: ${LOG_FILE}"
   if is_true "${follow}"; then
-    journalctl -u "${SERVICE_NAME}" -n "${lines}" -f
+    tail -n "${lines}" -f "${LOG_FILE}"
   else
-    journalctl -u "${SERVICE_NAME}" -n "${lines}" --no-pager
+    tail -n "${lines}" "${LOG_FILE}"
   fi
-}
-
-cmd_rollback() {
-  load_env
-  require_root
-  [[ -f "${STATE_DIR}/last_backup_path" ]] || die "no backup metadata found at ${STATE_DIR}/last_backup_path"
-  local backup_file
-  backup_file="$(cat "${STATE_DIR}/last_backup_path")"
-  [[ -f "${backup_file}" ]] || die "backup file not found: ${backup_file}"
-
-  install -m 600 "${backup_file}" "${CONFIG_PATH}"
-  log "restored config from ${backup_file} -> ${CONFIG_PATH}"
-  if command -v systemctl >/dev/null 2>&1; then
-    systemctl restart "${SERVICE_NAME}"
-    systemctl is-active --quiet "${SERVICE_NAME}" || die "service ${SERVICE_NAME} failed after rollback"
-  fi
-  log "rollback complete"
 }
 
 main() {
@@ -1111,11 +368,14 @@ main() {
 
   case "${cmd}" in
     init) init_files "$@" ;;
-    apply) cmd_apply "$@" ;;
-    proxy-hooks-install) cmd_proxy_hooks_install "$@" ;;
+    install-guide) cmd_install_guide "$@" ;;
+    extract) cmd_extract "$@" ;;
+    build-config) cmd_build_config "$@" ;;
+    pipeline) cmd_pipeline "$@" ;;
+    on) cmd_on "$@" ;;
+    off) cmd_off "$@" ;;
     status) cmd_status "$@" ;;
-    logs) cmd_logs "$@" ;;
-    rollback) cmd_rollback "$@" ;;
+    log) cmd_log "$@" ;;
     help|-h|--help) usage ;;
     version|-v|--version)
       printf '%s\n' "${FLY_VERSION}"
