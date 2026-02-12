@@ -97,8 +97,8 @@ Phase 13
 - [x] 增加 `config/rule-sources.example.json` 与 `init` 自动生成流程
 - [x] 测试覆盖 `.list/.yaml/.txt` 规则源到 route-rules 的转换与消费
 - [x] README 增加使用说明与 `sing-box-geosite` 署名
-- [ ] 提交并 push
-- **Status:** in_progress
+- [x] 提交并 push
+- **Status:** complete
 
 ## Errors Encountered
 | Error | Attempt | Resolution |

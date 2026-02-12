@@ -64,4 +64,4 @@
 - [x] 更新测试覆盖 `.list/.yaml/.txt` 转换链路，并验证被 `build-config` 消费。
 - [x] 修复无 `requests`/无 `PyYAML` 的运行回退。
 - [x] README 增加 `build-rules` 使用说明并补充 `sing-box-geosite` 署名。
-- [ ] 提交并 push 本轮“QX 规则转换模块集成”改动。
+- [x] 提交并 push 本轮“QX 规则转换模块集成”改动。
