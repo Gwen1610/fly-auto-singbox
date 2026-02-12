@@ -59,3 +59,5 @@
 - 已放宽 `extract` 和 `build-config` 的地区识别规则，并同步到 `internal_subscribe/tool.py`。
 - `extract` 报错现在会返回 sample tags，方便定位节点命名是否可识别。
 - 已新增 `config_template/minimal_four_regions.json` 兼容文件，避免旧路径引用报缺失。
+- 进一步修复：从 `SHARE_PREFIXES` 移除 `http://` 和 `https://`，避免把订阅 URL 误判为节点 URI，导致不下载订阅内容。
+- `extract.providers` 示例默认 `enabled` 调整为 `true`，降低初始化后踩坑概率。

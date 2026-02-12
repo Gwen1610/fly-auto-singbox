@@ -85,6 +85,7 @@ sing-box version
 提示：
 
 - `subscribes[].enabled` 必须是 `true` 才会生效。
+- `subscribes[].url` 是订阅链接时应为 `http/https`，程序会先下载再解析。
 - 如果节点名称里没有地区标识（US/HK/SG/JP 或对应中文/常见缩写），提取会失败。
 
 ## 6. 提取节点（只提 US/HK/SG/JP，不加分流）

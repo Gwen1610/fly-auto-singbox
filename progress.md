@@ -38,4 +38,7 @@
 - [x] 为 `extract` 无匹配报错增加 sample tags 提示。
 - [x] 新增兼容文件 `config_template/minimal_four_regions.json`。
 - [x] 再次完成验证（`bash -n fly`、`python3 -m py_compile ...`、`bash tests/test_pipeline.sh`）。
+- [x] 修复订阅 URL 误判 bug（`http/https` 不再当作节点协议前缀）。
+- [x] 示例配置默认 `enabled=true`。
+- [x] 再次完成验证（`bash -n fly`、`python3 -m py_compile ...`、`bash tests/test_pipeline.sh`）。
 - [ ] 提交并 push 本轮“extract 兼容修复”改动。

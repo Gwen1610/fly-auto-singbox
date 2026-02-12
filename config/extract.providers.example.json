@@ -2,7 +2,7 @@
   "subscribes": [
     {
       "tag": "default",
-      "enabled": false,
+      "enabled": true,
       "url": "https://example.com/subscription-or-local-file",
       "prefix": "",
       "emoji": 0,

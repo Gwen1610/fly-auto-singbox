@@ -52,8 +52,6 @@ SHARE_PREFIXES = (
     "wg://",
     "wireguard://",
     "http2://",
-    "http://",
-    "https://",
     "socks://",
     "socks5://",
     "anytls://",
