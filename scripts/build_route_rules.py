@@ -465,6 +465,12 @@ def main():
     if route_rule_sets:
         output["rule_set"] = route_rule_sets
 
+    def pretty_sibling_path(path: Path) -> Path:
+        name = path.name
+        if name.endswith(".json"):
+            return path.with_name(name[: -len(".json")] + ".pretty.json")
+        return path.with_name(name + ".pretty.json")
+
     def estimate_rule_items(rules: List[dict]) -> int:
         total = 0
         keys = {
@@ -502,6 +508,12 @@ def main():
         else:
             json.dump(output, f, ensure_ascii=False, indent=2)
         f.write("\n")
+    if compact:
+        pretty_path = pretty_sibling_path(output_path)
+        with pretty_path.open("w", encoding="utf-8") as f:
+            json.dump(output, f, ensure_ascii=False, indent=2)
+            f.write("\n")
+        print(f"saved pretty preview: {pretty_path}")
     print(f"saved route rules: {Path(args.output_file).resolve()}")
     print(f"generated rule blocks: {len(built_rules) + len(manual_blocks)}")
 

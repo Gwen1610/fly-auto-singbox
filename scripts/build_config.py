@@ -789,6 +789,12 @@ def main():
     )
     output_path = Path(args.output_file).resolve()
 
+    def pretty_sibling_path(path: Path) -> Path:
+        name = path.name
+        if name.endswith(".json"):
+            return path.with_name(name[: -len(".json")] + ".pretty.json")
+        return path.with_name(name + ".pretty.json")
+
     def estimate_route_items(route: dict) -> int:
         total = 0
         rules = route.get("rules", [])
@@ -830,6 +836,13 @@ def main():
         else:
             json.dump(config, f, ensure_ascii=False, indent=2)
         f.write("\n")
+
+    if compact:
+        pretty_path = pretty_sibling_path(output_path)
+        with pretty_path.open("w", encoding="utf-8") as f:
+            json.dump(config, f, ensure_ascii=False, indent=2)
+            f.write("\n")
+        print(f"saved pretty preview: {pretty_path}")
 
     region_counts = {region: sum(len(items) for items in grouped[region].values()) for region in grouped}
     print(f"region counts: {region_counts}")

@@ -189,6 +189,7 @@ sing-box version
   - `url`: 继续使用 `.list/.yaml/.txt` 规则源（会展开成 `domain/domain_suffix/...` 数组）
   - `rule_set`: 直接引用 sing-box 的规则集标签（更小、更快、对部分客户端更友好）
 - 当规则源非常大（例如 blackmatrix7 的 Advertising/Privacy 等），`build-rules` 和 `build-config` 会自动输出**压缩 JSON（无缩进）**，以减少文件体积，降低 iOS/VT 客户端因解析耗时/内存导致的启动失败概率。
+- 当触发自动压缩时，会额外输出一个同名的 `*.pretty.json` 作为“可读预览版”（例如 `config.pretty.json`、`config/route-rules.pretty.json`），导入客户端请仍使用非 pretty 的原文件。
 
 `rule_set` 示例（无需下载/展开大列表）：
 
