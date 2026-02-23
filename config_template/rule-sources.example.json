@@ -45,6 +45,12 @@
       "outbound": "Streaming"
     },
     {
+      "tag": "Claude",
+      "enabled": true,
+      "url": "https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/refs/heads/master/rule/QuantumultX/Claude/Claude.list",
+      "outbound": "AI"
+    }
+    {
       "tag": "OpenAI",
       "enabled": true,
       "url": "https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/master/rule/QuantumultX/OpenAI/OpenAI.list",

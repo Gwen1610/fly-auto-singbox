@@ -1,12 +1,10 @@
 # Fly Auto Sing-box
 
-全部代码都在本仓库内实现，不再依赖外部 `sing-box-subscribe` 目录。
-
 ## 1. 依赖
 
 ```bash
 cd fly-auto-singbox
-pip install -r requirements.txt
+python3 -m pip install -r requirements.txt
 ```
 
 ## 2. 初始化
@@ -15,7 +13,7 @@ pip install -r requirements.txt
 ./fly init
 ```
 
-会生成五个你要编辑的文件：
+会生成 5 个需要你编辑的文件：
 
 - `config/fly.env`
 - `config/extract.providers.json`
@@ -34,7 +32,7 @@ pip install -r requirements.txt
 
 ## 4. 自动安装 sing-box
 
-默认安装（自动识别 Linux/mac + 架构）：
+默认安装（自动识别 Linux/macOS + 架构）：
 
 ```bash
 ./fly install-singbox
@@ -43,7 +41,7 @@ pip install -r requirements.txt
 常用参数：
 
 ```bash
-./fly install-singbox --version 1.12.20
+./fly install-singbox --version 1.11.4
 ./fly install-singbox --os linux --arch amd64
 ./fly install-singbox --install-dir /usr/local/bin
 ./fly install-singbox --dry-run
@@ -380,17 +378,17 @@ sing-box version
   - `./fly init` 会复制为 `config/route-rules.json` 供你编辑。
   - 默认是空规则，不包含任何预置分流策略。
 
-## 14. Future Work
+## 12. Future Work
 
 见 `docs/future-work.md`。
 
-## 12. 测试
+## 13. 测试
 
 ```bash
 bash tests/test_pipeline.sh
 ```
 
-## 13. 署名
+## 14. 署名
 
 - 内置节点提取器代码来自开源项目 `sing-box-subscribe`。
 - 原作者：`Toperlock`（仓库：`https://github.com/Toperlock/sing-box-subscribe`）。
