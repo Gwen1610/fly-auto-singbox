@@ -784,6 +784,7 @@ cmd_publish_ruleset() {
 
   local message="chore: publish ruleset"
   local dry_run="false"
+  local remote="origin"
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --message)
@@ -793,6 +794,11 @@ cmd_publish_ruleset() {
         ;;
       --dry-run)
         dry_run="true"
+        ;;
+      --remote)
+        shift
+        [[ $# -gt 0 ]] || die "missing value for --remote"
+        remote="$1"
         ;;
       *)
         die "unknown flag for publish-ruleset: $1"
@@ -809,24 +815,65 @@ cmd_publish_ruleset() {
     staged_changes="true"
   fi
 
+  local branch=""
+  branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+  [[ -n "${branch}" ]] || branch="main"
+
+  local upstream=""
+  upstream="$(git rev-parse --abbrev-ref --symbolic-full-name "@{u}" 2>/dev/null || true)"
+  local ahead="0"
+  if [[ -n "${upstream}" ]]; then
+    ahead="$(git rev-list --count "${upstream}..HEAD" 2>/dev/null || echo 0)"
+  fi
+
   printf 'dry_run=%s\n' "${dry_run}"
   printf 'ruleset_dir=%s\n' "${RULESET_DIR}"
   printf 'staged_changes=%s\n' "${staged_changes}"
+  printf 'branch=%s\n' "${branch}"
+  printf 'upstream=%s\n' "${upstream:-<none>}"
+  printf 'ahead=%s\n' "${ahead}"
 
-  if [[ "${staged_changes}" != "true" ]]; then
+  if is_true "${dry_run}"; then
+    if [[ "${staged_changes}" == "true" ]]; then
+      git diff --cached --stat || true
+    fi
+    if [[ "${staged_changes}" == "true" || "${ahead}" != "0" ]]; then
+      printf 'result=would commit/push\n'
+    else
+      printf 'result=no changes\n'
+    fi
+    return 0
+  fi
+
+  if [[ "${staged_changes}" == "true" ]]; then
+    git commit -m "${message}" || die "git commit failed"
+  fi
+
+  if [[ "${staged_changes}" != "true" && "${ahead}" == "0" ]]; then
     printf 'result=no changes\n'
     return 0
   fi
 
-  if is_true "${dry_run}"; then
-    printf 'result=would commit and push\n'
-    git diff --cached --stat || true
+  local push_out=""
+  if push_out="$(git push "${remote}" "${branch}" 2>&1)"; then
+    printf 'result=published\n'
     return 0
   fi
 
-  git commit -m "${message}" || die "git commit failed"
-  git push || die "git push failed"
-  printf 'result=published\n'
+  # Common macOS / proxy / HTTP2 issue: GitHub may reset the connection and report HTTP 400.
+  if printf '%s\n' "${push_out}" | grep -qE 'RPC failed; HTTP 400|curl 22|unexpected disconnect|remote end hung up unexpectedly'; then
+    warn "git push failed with HTTP 400 / disconnect; retry with http.version=HTTP/1.1 and larger postBuffer"
+    git config http.version HTTP/1.1 || true
+    git config http.postBuffer 524288000 || true
+    git config core.compression 0 || true
+    if push_out="$(git push "${remote}" "${branch}" 2>&1)"; then
+      printf 'result=published\n'
+      return 0
+    fi
+  fi
+
+  printf '%s\n' "${push_out}" >&2
+  die "git push failed"
 }
 
 cmd_pipeline() {
