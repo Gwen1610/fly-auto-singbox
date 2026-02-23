@@ -444,6 +444,26 @@ if not any(isinstance(item, dict) and isinstance(item.get("type"), str) for item
     raise SystemExit("ASSERT FAIL: expected desktop dns.servers to use new type/server format")
 PY
 
+# Simulate a user-modified iOS template that accidentally contains new DNS schema fields.
+python3 - <<'PY'
+import json
+
+path = "./config/base-template.ios.json"
+with open(path, "r", encoding="utf-8") as f:
+    cfg = json.load(f)
+
+cfg.setdefault("dns", {})
+cfg["dns"]["servers"] = [
+    {"tag": "legacy-bad", "type": "https", "server": "1.1.1.1", "detour": "direct"},
+]
+cfg.setdefault("route", {})
+cfg["route"]["default_domain_resolver"] = "legacy-bad"
+
+with open(path, "w", encoding="utf-8") as f:
+    json.dump(cfg, f, ensure_ascii=False, indent=2)
+    f.write("\n")
+PY
+
 ./fly build-config --target ios --ruleset
 assert_file_exists "./config.ios.json"
 python3 - <<'PY'

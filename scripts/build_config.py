@@ -366,6 +366,33 @@ def upsert_dns_server(servers, tag: str, desired: dict):
     servers.append(deepcopy(desired))
 
 
+def normalize_dns_servers_for_ios_legacy(servers):
+    if not isinstance(servers, list):
+        return []
+
+    normalized = []
+    for item in servers:
+        if not isinstance(item, dict):
+            continue
+        cur = deepcopy(item)
+        if "address" not in cur:
+            server_type = str(cur.get("type", "")).strip().lower()
+            server = str(cur.get("server", "")).strip()
+            if server_type and server:
+                if "://" in server:
+                    address = server
+                else:
+                    address = f"{server_type}://{server}"
+                if server_type == "https" and "/" not in address.split("://", 1)[-1]:
+                    address = f"{address}/dns-query"
+                cur["address"] = address
+        cur.pop("type", None)
+        cur.pop("server", None)
+        cur.pop("path", None)
+        normalized.append(cur)
+    return normalized
+
+
 def ensure_connectivity_dns(config, outbounds):
     dns = config.get("dns")
     if not isinstance(dns, dict):
@@ -439,6 +466,9 @@ def ensure_connectivity_dns_ios(config, outbounds):
     if not isinstance(servers, list):
         servers = []
         dns["servers"] = servers
+    else:
+        dns["servers"] = normalize_dns_servers_for_ios_legacy(servers)
+        servers = dns["servers"]
 
     # iOS sing-box VT (core 1.11.x) uses the legacy DNS server format (`address`)
     # and will fail to decode the newer `type`/`server` fields.
@@ -752,6 +782,7 @@ def build_config(base_template, outbounds, final_outbound, rules, extra_rule_set
 
     route_base["final"] = final_outbound
     if str(target).strip().lower() == "ios":
+        route_base.pop("default_domain_resolver", None)
         route_base["rules"] = ensure_connectivity_route_ios(rules)
     else:
         # sing-box 1.12+ deprecates implicit dial DNS resolver selection and will
