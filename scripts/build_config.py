@@ -20,6 +20,8 @@ GOOGLE_DNS_SUFFIXES = [
     "youtube.com",
     "ytimg.com",
     "ggpht.com",
+    "github.com",
+    "githubusercontent.com",
 ]
 
 REGION_PATTERNS = OrderedDict(
@@ -79,15 +81,54 @@ OUTBOUND_ALIAS = {
     "block": "block",
 }
 
-RULE_SET_PRESETS = {
-    "geoip-cn": {
-        "tag": "geoip-cn",
+GEOIP_TAG_RE = re.compile(r"^[a-z0-9-]+$", re.IGNORECASE)
+
+
+def guess_ruleset_remote_url(tag: str) -> str:
+    """
+    Return an official SagerNet rule-set URL for a tag.
+
+    Notes:
+    - sing-box `route.rule_set` uses `.srs` binaries from:
+      - https://github.com/SagerNet/sing-geosite/tree/rule-set
+      - https://github.com/SagerNet/sing-geoip/tree/rule-set
+    - Common tag patterns:
+      - geoip-<cc> (e.g. geoip-cn)
+      - geosite-<name> (e.g. geosite-openai)
+      - category-<name> (e.g. category-ads-all) maps to geosite-category-<name>.srs
+    """
+    text = str(tag).strip()
+    if not text:
+        return ""
+
+    if text.startswith("geoip-"):
+        repo = "sing-geoip"
+        filename = text
+    elif text.startswith("geosite-"):
+        repo = "sing-geosite"
+        filename = text
+    elif text.startswith("category-"):
+        repo = "sing-geosite"
+        filename = f"geosite-{text}"
+    else:
+        return ""
+
+    return f"https://raw.githubusercontent.com/SagerNet/{repo}/rule-set/{filename}.srs"
+
+
+def make_ruleset_preset(tag: str):
+    url = guess_ruleset_remote_url(tag)
+    if not url:
+        return None
+    return {
+        "tag": tag,
         "type": "remote",
         "format": "binary",
-        "url": "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geoip/cn.srs",
-        "download_detour": "direct",
+        "url": url,
+        # For iOS / CN networks, GitHub raw is often slow/blocked on direct.
+        # Using Proxy makes rule-set initialization significantly more reliable.
+        "download_detour": "Proxy",
     }
-}
 
 
 def load_json(path: Path):
@@ -336,12 +377,25 @@ def ensure_connectivity_dns(config, outbounds):
         servers = []
         dns["servers"] = servers
 
+    legacy = any(isinstance(item, dict) and "address" in item for item in servers)
+
+    google_server = (
+        {"tag": "google", "address": "tls://8.8.8.8", "detour": "Proxy"}
+        if legacy
+        else {"tag": "google", "type": "tls", "server": "8.8.8.8", "detour": "Proxy"}
+    )
+    local_server = (
+        {"tag": "local", "address": "https://223.5.5.5/dns-query", "detour": "direct"}
+        if legacy
+        else {"tag": "local", "type": "https", "server": "223.5.5.5", "detour": "direct"}
+    )
+
     upsert_dns_server(
         servers,
         "google",
-        {"tag": "google", "type": "tls", "server": "8.8.8.8", "detour": "Proxy"},
+        google_server,
     )
-    upsert_dns_server(servers, "local", {"tag": "local", "type": "udp", "server": "223.5.5.5"})
+    upsert_dns_server(servers, "local", local_server)
 
     dns.setdefault("final", "local")
     dns.setdefault("strategy", "ipv4_only")
@@ -383,13 +437,62 @@ def ensure_connectivity_dns(config, outbounds):
         dns["rules"] = [*inject, *rules]
 
 
+def ensure_connectivity_dns_ios(config, outbounds):
+    dns = config.get("dns")
+    if not isinstance(dns, dict):
+        dns = {}
+        config["dns"] = dns
+
+    servers = dns.get("servers")
+    if not isinstance(servers, list):
+        servers = []
+        dns["servers"] = servers
+
+    # Keep legacy DNS server format for better VT (1.11.x) compatibility.
+    upsert_dns_server(
+        servers,
+        "local",
+        {"tag": "local", "address": "https://223.5.5.5/dns-query", "detour": "direct"},
+    )
+    upsert_dns_server(
+        servers,
+        "google",
+        {"tag": "google", "address": "tls://8.8.8.8", "detour": "Proxy"},
+    )
+
+    dns.setdefault("final", "local")
+    dns.setdefault("strategy", "ipv4_only")
+
+    rules = dns.get("rules")
+    if not isinstance(rules, list):
+        rules = []
+        dns["rules"] = rules
+
+    node_suffixes = collect_node_domain_suffixes(outbounds)
+    prefix_rules = []
+
+    if node_suffixes:
+        prefix_rules.append({"domain_suffix": node_suffixes, "server": "local"})
+    prefix_rules.append({"domain_suffix": GOOGLE_DNS_SUFFIXES, "server": "google"})
+
+    existing = json.dumps(rules, ensure_ascii=False, sort_keys=True)
+    inject = []
+    for item in prefix_rules:
+        if json.dumps(item, ensure_ascii=False, sort_keys=True) not in existing:
+            inject.append(item)
+
+    if inject:
+        dns["rules"] = [*inject, *rules]
+
+
 def ensure_connectivity_route(config, user_rules):
     route = config.get("route")
     if not isinstance(route, dict):
         route = {}
         config["route"] = route
 
-    route.setdefault("default_domain_resolver", {"server": "local"})
+    # NOTE: Do not inject `default_domain_resolver` by default.
+    # Older sing-box cores (e.g. 1.11.x) don't know this field and will fail to decode config.
 
     base_rules = [
         {
@@ -407,6 +510,22 @@ def ensure_connectivity_route(config, user_rules):
         {"ip_is_private": True, "outbound": "direct"},
     ]
 
+    combined = []
+    existing = json.dumps(user_rules, ensure_ascii=False, sort_keys=True)
+    for item in base_rules:
+        if json.dumps(item, ensure_ascii=False, sort_keys=True) not in existing:
+            combined.append(item)
+    combined.extend(user_rules)
+    return combined
+
+
+def ensure_connectivity_route_ios(user_rules):
+    # iOS sing-box VT (core 1.11.x) tends to be more fragile with complex logical rule blocks.
+    # Keep a conservative, minimal rule set close to "quickstart" configs.
+    base_rules = [
+        {"protocol": "dns", "action": "hijack-dns"},
+        {"ip_is_private": True, "outbound": "direct"},
+    ]
     combined = []
     existing = json.dumps(user_rules, ensure_ascii=False, sort_keys=True)
     for item in base_rules:
@@ -529,19 +648,17 @@ def ensure_legacy_geoip_compat(rule):
     normalized = [str(item).strip().lower() for item in values if str(item).strip()]
     if not normalized:
         return
-    unsupported = [item for item in normalized if item != "cn"]
-    if unsupported:
-        raise RuntimeError(
-            "geoip matcher is removed in sing-box 1.12; unsupported geoip values: "
-            + ",".join(unsupported)
-        )
     existing = rule.get("rule_set", [])
     if isinstance(existing, str):
         existing = [existing]
     if not isinstance(existing, list):
         raise RuntimeError("rule_set must be string or array when converting geoip")
-    if "geoip-cn" not in existing:
-        existing.append("geoip-cn")
+    for item in normalized:
+        if not GEOIP_TAG_RE.match(item):
+            raise RuntimeError(f"geoip matcher value not supported: {item}")
+        tag = f"geoip-{item}"
+        if tag not in existing:
+            existing.append(tag)
     rule["rule_set"] = existing
 
 
@@ -579,7 +696,7 @@ def validate_rules(rules_cfg, outbound_tags):
     return final, rules
 
 
-def build_config(base_template, outbounds, final_outbound, rules):
+def build_config(base_template, outbounds, final_outbound, rules, extra_rule_sets=None, target="desktop"):
     config = deepcopy(base_template)
     if "inbounds" not in config:
         raise RuntimeError("base template must contain inbounds")
@@ -598,20 +715,43 @@ def build_config(base_template, outbounds, final_outbound, rules):
         if isinstance(item, dict) and isinstance(item.get("tag"), str):
             existing_tags.add(item["tag"])
 
-    for tag in sorted(collect_required_rule_sets(rules)):
-        preset = RULE_SET_PRESETS.get(tag)
-        if preset and tag not in existing_tags:
-            existing_rule_sets.append(deepcopy(preset))
+    if isinstance(extra_rule_sets, dict):
+        extra_rule_sets = [extra_rule_sets]
+    if isinstance(extra_rule_sets, list):
+        for item in extra_rule_sets:
+            if not isinstance(item, dict):
+                continue
+            tag = item.get("tag")
+            if not isinstance(tag, str) or not tag.strip():
+                continue
+            if tag in existing_tags:
+                continue
+            existing_rule_sets.append(deepcopy(item))
             existing_tags.add(tag)
 
+    for tag in sorted(collect_required_rule_sets(rules)):
+        if tag in existing_tags:
+            continue
+        preset = make_ruleset_preset(tag)
+        if preset is None:
+            continue
+        existing_rule_sets.append(deepcopy(preset))
+        existing_tags.add(tag)
+
     route_base["final"] = final_outbound
-    route_base["rules"] = ensure_connectivity_route(config, rules)
+    if str(target).strip().lower() == "ios":
+        route_base["rules"] = ensure_connectivity_route_ios(rules)
+    else:
+        route_base["rules"] = ensure_connectivity_route(config, rules)
     route_base["rule_set"] = existing_rule_sets
 
     config["outbounds"] = outbounds
     config["route"] = route_base
     ensure_inbound_sniff(config)
-    ensure_connectivity_dns(config, outbounds)
+    if str(target).strip().lower() == "ios":
+        ensure_connectivity_dns_ios(config, outbounds)
+    else:
+        ensure_connectivity_dns(config, outbounds)
     return config
 
 
@@ -622,6 +762,7 @@ def main():
     parser.add_argument("--groups-file", required=True)
     parser.add_argument("--template-file", required=True)
     parser.add_argument("--output-file", required=True)
+    parser.add_argument("--target", choices=["desktop", "ios"], default="desktop")
     args = parser.parse_args()
 
     nodes = load_json(Path(args.nodes_file).resolve())
@@ -634,15 +775,65 @@ def main():
     outbound_tags = {item.get("tag") for item in outbounds if isinstance(item, dict)}
 
     rules_cfg = load_json(Path(args.rules_file).resolve())
+    extra_rule_sets = rules_cfg.get("rule_set")
     final_outbound, rules = validate_rules(rules_cfg, outbound_tags)
 
     base_template = load_json(Path(args.template_file).resolve())
-    config = build_config(base_template, outbounds, final_outbound, rules)
-    save_json(Path(args.output_file).resolve(), config)
+    config = build_config(
+        base_template,
+        outbounds,
+        final_outbound,
+        rules,
+        extra_rule_sets=extra_rule_sets,
+        target=args.target,
+    )
+    output_path = Path(args.output_file).resolve()
+
+    def estimate_route_items(route: dict) -> int:
+        total = 0
+        rules = route.get("rules", [])
+        if isinstance(rules, list):
+            keys = {
+                "domain_suffix",
+                "domain",
+                "domain_keyword",
+                "domain_regex",
+                "ip_cidr",
+                "source_ip_cidr",
+                "port",
+                "source_port",
+                "rule_set",
+            }
+            for rule in rules:
+                if not isinstance(rule, dict):
+                    continue
+                for key in keys:
+                    value = rule.get(key)
+                    if isinstance(value, list):
+                        total += len(value)
+                    elif isinstance(value, str) and value:
+                        total += 1
+        rule_sets = route.get("rule_set", [])
+        if isinstance(rule_sets, list):
+            total += len(rule_sets)
+        return total
+
+    # Auto-compact huge config for iOS clients that may time out / crash on very large JSON with indentation.
+    estimated_items = estimate_route_items(config.get("route", {}))
+    compact = estimated_items >= 20000
+    if compact:
+        print(f"info: compact_json=true (estimated_items={estimated_items})", file=sys.stderr)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with output_path.open("w", encoding="utf-8") as f:
+        if compact:
+            json.dump(config, f, ensure_ascii=False, separators=(",", ":"))
+        else:
+            json.dump(config, f, ensure_ascii=False, indent=2)
+        f.write("\n")
 
     region_counts = {region: sum(len(items) for items in grouped[region].values()) for region in grouped}
     print(f"region counts: {region_counts}")
-    print(f"saved config: {Path(args.output_file).resolve()}")
+    print(f"saved config: {output_path}")
 
 
 if __name__ == "__main__":

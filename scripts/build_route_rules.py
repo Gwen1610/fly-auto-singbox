@@ -2,6 +2,9 @@
 import argparse
 import ipaddress
 import json
+import hashlib
+import re
+import subprocess
 import sys
 import urllib.request
 from pathlib import Path
@@ -125,10 +128,12 @@ def parse_entry(raw: str) -> Tuple[str, str]:
         if not value:
             return "", ""
         if pattern.upper() == "GEOIP":
-            # sing-box 1.12 removed legacy geoip matcher; map CN to remote rule-set tag.
-            if value.lower() == "cn":
-                return "rule_set", "geoip-cn"
-            raise RuntimeError(f"GEOIP value not supported in sing-box 1.12+: {value}")
+            # sing-box 1.12 removed legacy geoip matcher; map to rule-set tag.
+            # Example: GEOIP,CN -> rule_set=geoip-cn
+            code = value.lower()
+            if not code or not code.replace("-", "").isalnum():
+                raise RuntimeError(f"GEOIP value not supported: {value}")
+            return "rule_set", f"geoip-{code}"
         key = MAP_DICT.get(pattern)
         if not key:
             return "", ""
@@ -180,6 +185,15 @@ def normalize_rule_outbounds(rules: List[dict]) -> List[dict]:
             copied["outbound"] = normalize_outbound(copied["outbound"])
         normalized.append(copied)
     return normalized
+
+
+def slugify_tag(text: str) -> str:
+    value = str(text).strip().lower()
+    if not value:
+        return "ruleset"
+    value = re.sub(r"[^a-z0-9]+", "-", value)
+    value = value.strip("-")
+    return value or "ruleset"
 
 
 def parse_entries_from_yaml(text: str) -> Iterable[str]:
@@ -235,16 +249,77 @@ def validate_source_item(item: dict, index: int):
         raise RuntimeError(f"sources[{index}] must be an object")
     if not isinstance(item.get("enabled", False), bool):
         raise RuntimeError(f"sources[{index}].enabled must be boolean")
-    if not isinstance(item.get("url", ""), str) or not item.get("url", "").strip():
-        raise RuntimeError(f"sources[{index}].url must be non-empty string")
     if not isinstance(item.get("outbound", ""), str) or not item.get("outbound", "").strip():
         raise RuntimeError(f"sources[{index}].outbound must be non-empty string")
+    url = item.get("url")
+    rule_set = item.get("rule_set")
+    has_url = isinstance(url, str) and url.strip()
+    if isinstance(rule_set, str):
+        has_rule_set = bool(rule_set.strip())
+    elif isinstance(rule_set, list):
+        has_rule_set = any(str(value).strip() for value in rule_set)
+    else:
+        has_rule_set = False
+    if not has_url and not has_rule_set:
+        raise RuntimeError(f"sources[{index}] requires either non-empty url or rule_set")
+
+
+def normalize_rule_set_value(raw) -> List[str]:
+    if raw is None:
+        return []
+    if isinstance(raw, str):
+        value = raw.strip()
+        return [value] if value else []
+    if isinstance(raw, list):
+        items: List[str] = []
+        for item in raw:
+            text = str(item).strip()
+            if text and text not in items:
+                items.append(text)
+        return items
+    return []
 
 
 def main():
     parser = argparse.ArgumentParser(description="Build config/route-rules.json from QX/Clash rule sources")
     parser.add_argument("--sources-file", required=True)
     parser.add_argument("--output-file", required=True)
+    parser.add_argument(
+        "--mode",
+        choices=["inline", "ruleset"],
+        default="inline",
+        help="inline: expand QX rules into route.rules; ruleset: compile QX rules into .srs and reference via rule_set tags",
+    )
+    parser.add_argument(
+        "--ruleset-dir",
+        default="./ruleset",
+        help="Directory to write compiled rule-set files when mode=ruleset",
+    )
+    parser.add_argument(
+        "--ruleset-base-url",
+        default="",
+        help="Base URL for raw .srs files (e.g. https://raw.githubusercontent.com/<user>/<repo>/main/ruleset) when mode=ruleset",
+    )
+    parser.add_argument(
+        "--ruleset-download-detour",
+        default="Proxy",
+        help="download_detour to use in route.rule_set remote items when mode=ruleset",
+    )
+    parser.add_argument(
+        "--ruleset-tag-prefix",
+        default="qx-",
+        help="Prefix for generated rule_set tags when mode=ruleset",
+    )
+    parser.add_argument(
+        "--sing-box-bin",
+        default="sing-box",
+        help="sing-box binary to use for `rule-set compile` when mode=ruleset",
+    )
+    parser.add_argument(
+        "--skip-compile",
+        action="store_true",
+        help="Skip compiling .json to .srs (useful for tests). Still emits route-rules.json referencing .srs by URL.",
+    )
     args = parser.parse_args()
 
     sources_path = Path(args.sources_file).resolve()
@@ -277,27 +352,100 @@ def main():
     append_rules = normalize_rule_outbounds(append_rules)
 
     built_rules: List[dict] = []
+    route_rule_sets: List[dict] = []
     enabled_count = 0
+    used_ruleset_tags: Set[str] = set()
+
+    mode = str(args.mode).strip().lower()
+    ruleset_dir = Path(args.ruleset_dir).resolve()
+    ruleset_base_url = str(args.ruleset_base_url).strip().rstrip("/")
+    ruleset_download_detour = str(args.ruleset_download_detour).strip() or "Proxy"
+    ruleset_tag_prefix = str(args.ruleset_tag_prefix)
+    sing_box_bin = str(args.sing_box_bin).strip() or "sing-box"
+
+    if mode == "ruleset":
+        if not ruleset_base_url:
+            raise RuntimeError("--ruleset-base-url is required when --mode=ruleset")
+        ruleset_dir.mkdir(parents=True, exist_ok=True)
+
     for index, item in enumerate(sources):
         validate_source_item(item, index)
         if not item.get("enabled", False):
             continue
 
         enabled_count += 1
-        src = item["url"].strip()
         outbound = normalize_outbound(item["outbound"].strip())
         tag = str(item.get("tag", f"source-{index + 1}"))
 
+        rule_sets = normalize_rule_set_value(item.get("rule_set"))
+        if rule_sets:
+            built_rules.append({"rule_set": rule_sets, "outbound": outbound})
+            print(f"source '{tag}' -> rule_set={rule_sets}", file=sys.stderr)
+            continue
+
+        src = str(item.get("url", "")).strip()
         text = read_text_from_source(src, sources_path.parent)
         values_by_key = parse_source_rules(src, text)
         if not values_by_key:
             print(f"warn: source '{tag}' produced no usable rules, skip", file=sys.stderr)
             continue
 
-        rule = {key: sorted(values) for key, values in sorted(values_by_key.items())}
-        rule["outbound"] = outbound
-        built_rules.append(rule)
-        print(f"source '{tag}' -> {sum(len(v) for v in values_by_key.values())} entries", file=sys.stderr)
+        if mode == "inline":
+            rule = {key: sorted(values) for key, values in sorted(values_by_key.items())}
+            rule["outbound"] = outbound
+            built_rules.append(rule)
+            print(
+                f"source '{tag}' -> {sum(len(v) for v in values_by_key.values())} entries",
+                file=sys.stderr,
+            )
+            continue
+
+        slug = slugify_tag(tag)
+        if slug == "ruleset":
+            fingerprint = hashlib.sha1(f"{tag}|{src}|{outbound}".encode("utf-8", errors="ignore")).hexdigest()[:8]
+            slug = slugify_tag(f"source-{fingerprint}")
+        ruleset_tag = f"{ruleset_tag_prefix}{slug}"
+        if ruleset_tag in used_ruleset_tags:
+            suffix = 2
+            while f"{ruleset_tag}-{suffix}" in used_ruleset_tags:
+                suffix += 1
+            ruleset_tag = f"{ruleset_tag}-{suffix}"
+        used_ruleset_tags.add(ruleset_tag)
+        json_path = (ruleset_dir / f"{ruleset_tag}.json").resolve()
+        srs_path = (ruleset_dir / f"{ruleset_tag}.srs").resolve()
+
+        ruleset_json = {
+            "version": 1,
+            "rules": [{key: sorted(values) for key, values in sorted(values_by_key.items())}],
+        }
+        json_path.write_text(json.dumps(ruleset_json, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+        if not args.skip_compile:
+            try:
+                subprocess.run(
+                    [sing_box_bin, "rule-set", "compile", str(json_path), "-o", str(srs_path)],
+                    check=True,
+                    stdout=subprocess.DEVNULL,
+                )
+            except FileNotFoundError as exc:
+                raise RuntimeError(f"cannot run sing-box: {sing_box_bin}") from exc
+            except subprocess.CalledProcessError as exc:
+                raise RuntimeError(f"sing-box rule-set compile failed for {json_path}") from exc
+
+        built_rules.append({"rule_set": [ruleset_tag], "outbound": outbound})
+        route_rule_sets.append(
+            {
+                "tag": ruleset_tag,
+                "type": "remote",
+                "format": "binary",
+                "url": f"{ruleset_base_url}/{ruleset_tag}.srs",
+                "download_detour": ruleset_download_detour,
+            }
+        )
+        print(
+            f"source '{tag}' -> ruleset_tag={ruleset_tag} entries={sum(len(v) for v in values_by_key.values())}",
+            file=sys.stderr,
+        )
 
     if enabled_count == 0:
         print("warn: no enabled rule sources; output will keep only prepend/append rules", file=sys.stderr)
@@ -314,7 +462,46 @@ def main():
         manual_blocks.append({key: sorted(values), "outbound": outbound})
 
     output = {"final": final, "rules": [*prepend_rules, *built_rules, *manual_blocks, *append_rules]}
-    save_json(Path(args.output_file).resolve(), output)
+    if route_rule_sets:
+        output["rule_set"] = route_rule_sets
+
+    def estimate_rule_items(rules: List[dict]) -> int:
+        total = 0
+        keys = {
+            "domain_suffix",
+            "domain",
+            "domain_keyword",
+            "domain_regex",
+            "ip_cidr",
+            "source_ip_cidr",
+            "port",
+            "source_port",
+            "rule_set",
+        }
+        for rule in rules:
+            if not isinstance(rule, dict):
+                continue
+            for key in keys:
+                value = rule.get(key)
+                if isinstance(value, list):
+                    total += len(value)
+                elif isinstance(value, str) and value:
+                    total += 1
+        return total
+
+    output_path = Path(args.output_file).resolve()
+    total_items = estimate_rule_items(output.get("rules", []))
+    # Auto-compact huge rule files for better iOS client compatibility.
+    compact = total_items >= 20000
+    if compact:
+        print(f"info: compact_json=true (estimated_items={total_items})", file=sys.stderr)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with output_path.open("w", encoding="utf-8") as f:
+        if compact:
+            json.dump(output, f, ensure_ascii=False, separators=(",", ":"))
+        else:
+            json.dump(output, f, ensure_ascii=False, indent=2)
+        f.write("\n")
     print(f"saved route rules: {Path(args.output_file).resolve()}")
     print(f"generated rule blocks: {len(built_rules) + len(manual_blocks)}")
 

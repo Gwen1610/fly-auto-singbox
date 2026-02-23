@@ -41,6 +41,7 @@ assert_file_exists "./config/rule-sources.json"
 assert_file_exists "./config/group-strategy.json"
 assert_file_exists "./config/route-rules.json"
 assert_file_exists "./config/base-template.json"
+assert_file_exists "./config/base-template.ios.json"
 
 mkdir -p "./build" "./bin"
 cat > "./build/subscription_a.txt" <<'EOF'
@@ -143,8 +144,11 @@ RULE_SOURCES_FILE="./config/rule-sources.json"
 GROUP_STRATEGY_FILE="./config/group-strategy.json"
 NODES_FILE="./build/nodes.json"
 ROUTE_RULES_FILE="./config/route-rules.json"
+ROUTE_RULES_FILE_RULESET="./config/route-rules.ruleset.json"
 BASE_TEMPLATE_FILE="./config/base-template.json"
+BASE_TEMPLATE_FILE_IOS="./config/base-template.ios.json"
 CONFIG_JSON="./config.json"
+CONFIG_JSON_IOS="./config.ios.json"
 PID_FILE="./.sing-box.pid"
 LOG_FILE="./sing-box.log"
 SINGBOX_VERSION="1.12.20"
@@ -257,6 +261,15 @@ cat > "./config/rule-sources.json" <<'JSON'
       "outbound": "America"
     },
     {
+      "tag": "ChinaRuleset",
+      "enabled": true,
+      "rule_set": [
+        "geosite-cn",
+        "geoip-cn"
+      ],
+      "outbound": "Direct"
+    },
+    {
       "tag": "YouTube",
       "enabled": true,
       "url": "./build/youtube.yaml",
@@ -273,6 +286,18 @@ cat > "./config/rule-sources.json" <<'JSON'
       "enabled": true,
       "url": "./build/reject.list",
       "outbound": "Reject"
+    },
+    {
+      "tag": "广告",
+      "enabled": true,
+      "url": "./build/reject.list",
+      "outbound": "Reject"
+    },
+    {
+      "tag": "隐私",
+      "enabled": true,
+      "url": "./build/domains.txt",
+      "outbound": "Singapore"
     }
   ],
   "manual_rules": [
@@ -294,6 +319,7 @@ assert_contains '"domain_suffix": \[' "./config/route-rules.json"
 assert_contains '"domain": \[' "./config/route-rules.json"
 assert_contains '"rule_set": \[' "./config/route-rules.json"
 assert_contains '"geoip-cn"' "./config/route-rules.json"
+assert_contains '"geosite-cn"' "./config/route-rules.json"
 assert_not_contains '"geoip": \[' "./config/route-rules.json"
 
 ./fly build-config
@@ -317,12 +343,91 @@ if not any(
     raise SystemExit("ASSERT FAIL: expected QUIC reject rule to be present")
 
 tags = {item.get("tag") for item in cfg.get("outbounds", []) if isinstance(item, dict)}
+if "direct" not in tags:
+    raise SystemExit("ASSERT FAIL: expected direct outbound for DNS detour")
 if "block" not in tags:
     raise SystemExit("ASSERT FAIL: expected block outbound for Reject mapping")
 
 route_sets = cfg.get("route", {}).get("rule_set", [])
 if not any(isinstance(item, dict) and item.get("tag") == "geoip-cn" for item in route_sets):
     raise SystemExit("ASSERT FAIL: expected geoip-cn rule_set to be injected")
+if not any(isinstance(item, dict) and item.get("tag") == "geosite-cn" for item in route_sets):
+    raise SystemExit("ASSERT FAIL: expected geosite-cn rule_set to be injected")
+PY
+
+# Build rule-set files from QX sources and reference them by remote URLs (small config for iOS clients).
+./fly build-rules --ruleset --base-url "https://example.com/ruleset" --ruleset-dir "./ruleset" --skip-compile
+assert_file_exists "./ruleset/qx-openai.json"
+assert_file_exists "./ruleset/qx-youtube.json"
+
+python3 - <<'PY'
+import json
+
+with open("./config/route-rules.ruleset.json", "r", encoding="utf-8") as f:
+    rules_cfg = json.load(f)
+
+route_sets = rules_cfg.get("rule_set", [])
+if not isinstance(route_sets, list) or not route_sets:
+    raise SystemExit("ASSERT FAIL: expected route-rules.json to include top-level rule_set list in ruleset mode")
+
+by_tag = {item.get("tag"): item for item in route_sets if isinstance(item, dict)}
+qx_tags = [item.get("tag") for item in route_sets if isinstance(item, dict) and str(item.get("tag", "")).startswith("qx-")]
+qx_tags = [tag for tag in qx_tags if isinstance(tag, str)]
+if len(qx_tags) != 6:
+    raise SystemExit(f"ASSERT FAIL: expected 6 generated qx-* rule_set items, got {len(qx_tags)} ({qx_tags})")
+if len(set(qx_tags)) != 6:
+    raise SystemExit(f"ASSERT FAIL: expected generated qx-* rule_set tags to be unique, got {qx_tags}")
+for tag in ("qx-openai", "qx-youtube", "qx-custom", "qx-rejectset"):
+    item = by_tag.get(tag)
+    if not item:
+        raise SystemExit(f"ASSERT FAIL: missing rule_set definition for {tag}")
+    if item.get("type") != "remote" or item.get("format") != "binary":
+        raise SystemExit(f"ASSERT FAIL: unexpected rule_set definition for {tag}: {item}")
+    if not str(item.get("url", "")).endswith(f"/{tag}.srs"):
+        raise SystemExit(f"ASSERT FAIL: unexpected rule_set url for {tag}: {item.get('url')}")
+    if item.get("download_detour") != "Proxy":
+        raise SystemExit(f"ASSERT FAIL: expected download_detour=Proxy for {tag}")
+
+rules = rules_cfg.get("rules", [])
+if not any(isinstance(rule, dict) and rule.get("outbound") == "America" and rule.get("rule_set") == ["qx-openai"] for rule in rules):
+    raise SystemExit("ASSERT FAIL: expected a qx-openai rule block for outbound America")
+PY
+
+./fly build-config --ruleset
+python3 - <<'PY'
+import json
+
+with open("./config.json", "r", encoding="utf-8") as f:
+    cfg = json.load(f)
+
+route_sets = cfg.get("route", {}).get("rule_set", [])
+tags = {item.get("tag") for item in route_sets if isinstance(item, dict)}
+qx_tags = {tag for tag in tags if isinstance(tag, str) and tag.startswith("qx-")}
+if len(qx_tags) != 6:
+    raise SystemExit(f"ASSERT FAIL: expected 6 qx-* rule_set items in config.route.rule_set, got {len(qx_tags)} ({sorted(qx_tags)})")
+for tag in ("qx-openai", "qx-youtube", "qx-custom", "qx-rejectset"):
+    if tag not in tags:
+        raise SystemExit(f"ASSERT FAIL: expected {tag} to be present in config.route.rule_set after build-ruleset")
+PY
+
+./fly build-config --target ios --ruleset
+assert_file_exists "./config.ios.json"
+python3 - <<'PY'
+import json
+
+with open("./config.ios.json", "r", encoding="utf-8") as f:
+    cfg = json.load(f)
+
+inbounds = cfg.get("inbounds", [])
+types = [item.get("type") for item in inbounds if isinstance(item, dict)]
+if "tun" not in types:
+    raise SystemExit("ASSERT FAIL: expected iOS config to include tun inbound")
+if "mixed" in types:
+    raise SystemExit("ASSERT FAIL: iOS config should not include mixed inbound by default")
+
+dns = cfg.get("dns")
+if not isinstance(dns, dict) or not dns.get("servers"):
+    raise SystemExit("ASSERT FAIL: expected iOS config to include dns.servers (VT 1.11.4 friendly)")
 PY
 
 ./fly pipeline

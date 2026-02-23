@@ -19,39 +19,18 @@
       "stack": "system",
       "auto_route": true,
       "strict_route": true
-    },
-    {
-      "tag": "mixed-in",
-      "type": "mixed",
-      "listen": "127.0.0.1",
-      "listen_port": 7890
     }
   ],
   "dns": {
     "servers": [
-      {
-        "tag": "google",
-        "address": "tls://8.8.8.8",
-        "detour": "Proxy"
-      },
       {
         "tag": "local",
         "address": "https://223.5.5.5/dns-query",
         "detour": "direct"
       }
     ],
-    "rules": [
-      {
-        "clash_mode": "direct",
-        "server": "local"
-      },
-      {
-        "clash_mode": "global",
-        "server": "google"
-      }
-    ],
-    "independent_cache": true,
-    "strategy": "prefer_ipv4"
+    "final": "local",
+    "strategy": "ipv4_only"
   },
   "outbounds": [],
   "route": {

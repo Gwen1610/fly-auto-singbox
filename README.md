@@ -140,9 +140,39 @@ sing-box version
 ./fly build-rules
 ```
 
+如果你希望在 iOS/VT 等客户端避免“内联大规则导致 config.json 过大/启动失败”，可以选择把 QX 规则**编译成 sing-box rule-set（.srs）并在配置里引用 URL**（生成一个更小的 ruleset 规则文件 `config/route-rules.ruleset.json`）：
+
+```bash
+# 1) 在 config/fly.env 里设置 RULESET_BASE_URL（指向你 GitHub 上 ruleset 目录的 raw 地址）
+#    例：https://raw.githubusercontent.com/<user>/<repo>/main/ruleset
+# 2) 生成 ruleset/*.srs + 小体积的 config/route-rules.ruleset.json
+./fly build-rules --ruleset
+
+# 3) 把 ruleset/ 目录 git push 到 GitHub 后，再生成最终配置：
+#    - 电脑端：config.json
+#    - iOS 端：config.ios.json
+./fly build-config --ruleset
+./fly build-config --target ios --ruleset
+```
+
+也可以不改 `fly.env`，直接传参：
+
+```bash
+./fly build-rules --ruleset --base-url "https://raw.githubusercontent.com/<user>/<repo>/main/ruleset"
+```
+
+说明：
+
+- `build-rules --ruleset` 会为每个启用的 `sources[].url` 生成一个 `rule_set` 标签（默认前缀 `qx-`）。
+- 当 `sources[].tag` 含中文/特殊字符导致无法生成稳定 slug 时，会自动回退为 `qx-source-<hash>`，避免文件名冲突且更稳定。
+- `./fly build-ruleset` 仍可用，但只是 `./fly build-rules --ruleset` 的兼容别名。
+
+另外，iOS sing-box VT（核心 `1.11.4`）下，“极简但不含 `dns` 配置”的 JSON 往往会直接启动失败并只提示 “internet error”，而不会产生日志；推荐从本仓库的 iOS 模板（带 `dns`）开始改，而不是从 ultra-min 配置开始删字段。
+
 输出文件：
 
 - `config/route-rules.json`
+- `config/route-rules.ruleset.json`（ruleset 模式）
 
 说明：
 
@@ -151,7 +181,24 @@ sing-box version
 - 你也可以不使用它，继续手动编辑 `config/route-rules.json`。
 - `manual_rules` 支持直接写 QX 风格单行规则（`类型, 值, 出口`）。
 - 出口名支持别名：`Direct -> direct`、`Reject -> block`（会自动规范化）。
-- `GEOIP,CN,Direct` 会自动转换为 `rule_set=geoip-cn`（兼容 sing-box 1.12+）。
+- `GEOIP,<CC>,Direct` 会自动转换为 `rule_set=geoip-<cc>`（兼容 sing-box 1.12+）。
+- `build-rules` 的 `sources[]` 现在支持两种写法（二选一）：
+  - `url`: 继续使用 `.list/.yaml/.txt` 规则源（会展开成 `domain/domain_suffix/...` 数组）
+  - `rule_set`: 直接引用 sing-box 的规则集标签（更小、更快、对部分客户端更友好）
+- 当规则源非常大（例如 blackmatrix7 的 Advertising/Privacy 等），`build-rules` 和 `build-config` 会自动输出**压缩 JSON（无缩进）**，以减少文件体积，降低 iOS/VT 客户端因解析耗时/内存导致的启动失败概率。
+
+`rule_set` 示例（无需下载/展开大列表）：
+
+```json
+{
+  "tag": "Ads",
+  "enabled": true,
+  "rule_set": ["category-ads-all"],
+  "outbound": "Reject"
+}
+```
+
+仓库内置了一个 `rule_set` 版本的参考模板：`config_template/rule-sources.ruleset.example.json`。
 
 ## 8. 注入分流规则生成最终配置
 
@@ -159,9 +206,23 @@ sing-box version
 ./fly build-config
 ```
 
+如果你使用了 ruleset 规则（`./fly build-rules --ruleset`），则运行：
+
+```bash
+./fly build-config --ruleset
+```
+
+如果你想生成 iOS 端配置（更偏兼容 VT `1.11.4`），则运行：
+
+```bash
+./fly build-config --target ios
+./fly build-config --target ios --ruleset
+```
+
 输入规则文件：
 
 - `config/route-rules.json`（默认由 `config_template/route-rules.example.json` 生成）
+- `config/route-rules.ruleset.json`（`build-rules --ruleset` 生成）
 - `config/group-strategy.json`（默认由 `config_template/group-strategy.example.json` 生成）
 
 默认内容：
@@ -177,14 +238,30 @@ sing-box version
 - 在 `route.rules` 前置注入 `hijack-dns`（接管系统 DNS）、QUIC `reject`（`protocol=quic` / `udp:443`）、以及 `ip_is_private -> direct`。
 - 在 `dns` 中注入 `local` 与 `google` 两个 server，并通过规则实现“节点域名 bootstrap 走 local”和“Google/YouTube 域名走 google”。
 
+> 注：以上“默认注入”以 `--target desktop` 为准；`--target ios` 会使用更保守的注入策略（更贴近 VT `1.11.4` 的兼容性需求）。
+
 输出文件：
 
 - `config.json`
+- `config.ios.json`（`--target ios`）
 
 也可以一步跑完提取+构建：
 
 ```bash
 ./fly pipeline
+```
+
+如果你想一步生成 ruleset 规则 + ruleset 配置：
+
+```bash
+./fly pipeline --ruleset
+```
+
+如果你想一步生成 iOS 端配置：
+
+```bash
+./fly pipeline --target ios
+./fly pipeline --target ios --ruleset
 ```
 
 ## 9. 分组设计哲学（分层选择器）
@@ -274,10 +351,20 @@ sing-box version
 - `config/base-template.json`
   - `build-config` 的主模板，定义 inbounds/dns/route 的基础骨架。
   - `build-config` 会在此基础上补齐 outbounds，并注入部分“连通性默认行为”（见上文第 8 节）。
+- `config/base-template.ios.json`
+  - iOS 端（VT `1.11.4`）更偏兼容的主模板（legacy DNS servers/address + 更保守的默认注入）。
+  - 用法：`./fly build-config --target ios`（默认输出 `config.ios.json`）。
+- `config_template/base-template.vt.legacy.example.json`
+  - 旧写法（legacy DNS servers/address）的参考骨架，适合在某些客户端/旧核心下做兼容测试。
+  - 用法：复制到 `config/` 后，在 `config/fly.env` 把 `BASE_TEMPLATE_FILE` 指向该文件再运行 `./fly build-config`。
 - `config_template/rule-sources.example.json`
   - QX/Clash 规则源配置模板。
   - `./fly init` 会复制为 `config/rule-sources.json` 供你编辑。
-  - `./fly build-rules` 读取这个文件生成 `config/route-rules.json`。
+  - `./fly build-rules` 读取这个文件生成 `config/route-rules.json`（默认 inline）。
+  - `./fly build-rules --ruleset` 会生成 `config/route-rules.ruleset.json`（引用远程 `.srs`）。
+- `config_template/rule-sources.ruleset.example.json`
+  - `rule_set` 版本的规则源参考模板（不内联大列表）。
+  - 适合 iOS/VT 客户端：建议配合 `./fly build-rules --ruleset` + GitHub raw URL 引用。
 - `config_template/group-strategy.example.json`
   - 分层分组策略模板（来源组、地区组、业务组、Proxy 顶层）。
   - `./fly init` 会复制为 `config/group-strategy.json` 供你编辑。

@@ -5,8 +5,14 @@ config/extract.providers.json
 config/rule-sources.json
 config/group-strategy.json
 config/route-rules.json
+config/route-rules.ruleset.json
+config/route-rules.online.json
 *.log
 .sing-box.pid
 __pycache__/
 *.pyc
 .DS_Store
+/cache.db
+/config.json
+/config.*.json
+ruleset/*.json

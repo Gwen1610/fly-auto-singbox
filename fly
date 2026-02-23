@@ -110,10 +110,11 @@ Usage:
   ./fly check-singbox
   ./fly install-singbox [--version v] [--os linux|darwin] [--arch amd64|arm64] [--install-dir dir] [--dry-run] [--force]
   ./fly install-guide
-  ./fly build-rules
+  ./fly build-rules [--ruleset] [--base-url url] [--ruleset-dir dir] [--skip-compile]
+  ./fly build-ruleset [--base-url url] [--ruleset-dir dir] [--skip-compile]  # alias of build-rules --ruleset
   ./fly extract
-  ./fly build-config
-  ./fly pipeline
+  ./fly build-config [--target desktop|ios] [--ruleset]
+  ./fly pipeline [--target desktop|ios] [--ruleset]
   ./fly on
   ./fly off
   ./fly status
@@ -125,10 +126,11 @@ Command summary:
   check-singbox Show installed sing-box path and version
   install-singbox Auto download + install sing-box for linux/mac
   install-guide  Alias of install-singbox --dry-run
-  build-rules   Build config/route-rules.json from QX/Clash rule sources
+  build-rules   Build route rules from QX/Clash sources (inline by default; use --ruleset for rule-set mode)
+  build-ruleset Alias of build-rules --ruleset (kept for backward compatibility)
   extract       Extract region nodes only (US/HK/SG/JP, no route rules)
   build-config  Build final config.json by injecting route rules into extracted nodes
-  pipeline      Run extract + build-config
+  pipeline      Run extract + build-config (or --ruleset: extract + build-rules --ruleset + build-config --ruleset)
   on            Start sing-box in background (nohup + PID file)
   off           Stop sing-box using PID file (with pkill fallback)
   status        Show running status from PID file
@@ -164,8 +166,16 @@ load_env() {
   : "${GROUP_STRATEGY_FILE:=./config/group-strategy.json}"
   : "${NODES_FILE:=./build/nodes.json}"
   : "${ROUTE_RULES_FILE:=./config/route-rules.json}"
+  : "${ROUTE_RULES_FILE_ONLINE:=}"
+  : "${ROUTE_RULES_FILE_RULESET:=${ROUTE_RULES_FILE_ONLINE:-./config/route-rules.ruleset.json}}"
   : "${BASE_TEMPLATE_FILE:=./config/base-template.json}"
+  : "${BASE_TEMPLATE_FILE_IOS:=./config/base-template.ios.json}"
   : "${CONFIG_JSON:=./config.json}"
+  : "${CONFIG_JSON_IOS:=./config.ios.json}"
+  : "${RULESET_BASE_URL:=}"
+  : "${RULESET_DIR:=./ruleset}"
+  : "${RULESET_DOWNLOAD_DETOUR:=Proxy}"
+  : "${RULESET_TAG_PREFIX:=qx-}"
   : "${PID_FILE:=./.sing-box.pid}"
   : "${LOG_FILE:=./sing-box.log}"
   : "${SINGBOX_VERSION:=1.12.20}"
@@ -177,8 +187,12 @@ load_env() {
   GROUP_STRATEGY_FILE="$(abs_path "${GROUP_STRATEGY_FILE}")"
   NODES_FILE="$(abs_path "${NODES_FILE}")"
   ROUTE_RULES_FILE="$(abs_path "${ROUTE_RULES_FILE}")"
+  ROUTE_RULES_FILE_RULESET="$(abs_path "${ROUTE_RULES_FILE_RULESET}")"
   BASE_TEMPLATE_FILE="$(abs_path "${BASE_TEMPLATE_FILE}")"
+  BASE_TEMPLATE_FILE_IOS="$(abs_path "${BASE_TEMPLATE_FILE_IOS}")"
   CONFIG_JSON="$(abs_path "${CONFIG_JSON}")"
+  CONFIG_JSON_IOS="$(abs_path "${CONFIG_JSON_IOS}")"
+  RULESET_DIR="$(abs_path "${RULESET_DIR}")"
   PID_FILE="$(abs_path "${PID_FILE}")"
   LOG_FILE="$(abs_path "${LOG_FILE}")"
 }
@@ -197,6 +211,37 @@ detect_arch() {
     aarch64|arm64) printf 'arm64\n' ;;
     *) die "unsupported architecture: $(uname -m)" ;;
   esac
+}
+
+guess_ruleset_base_url_from_git() {
+  command -v git >/dev/null 2>&1 || return 1
+
+  local origin=""
+  origin="$(git config --get remote.origin.url 2>/dev/null || true)"
+  [[ -n "${origin}" ]] || return 1
+
+  local path=""
+  case "${origin}" in
+    git@github.com:*) path="${origin#git@github.com:}" ;;
+    ssh://git@github.com/*) path="${origin#ssh://git@github.com/}" ;;
+    https://github.com/*) path="${origin#https://github.com/}" ;;
+    http://github.com/*) path="${origin#http://github.com/}" ;;
+    *) return 1 ;;
+  esac
+  path="${path%.git}"
+
+  local owner="" repo=""
+  IFS='/' read -r owner repo _rest <<<"${path}"
+  [[ -n "${owner}" && -n "${repo}" ]] || return 1
+
+  local branch="main"
+  local head=""
+  head="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+  if [[ -n "${head}" && "${head}" != "HEAD" ]]; then
+    branch="${head}"
+  fi
+
+  printf 'https://raw.githubusercontent.com/%s/%s/%s/ruleset\n' "${owner}" "${repo}" "${branch}"
 }
 
 resolve_release_asset() {
@@ -597,6 +642,67 @@ cmd_build_rules() {
   need_cmd "${PYTHON_BIN}"
   [[ -f "${RULE_SOURCES_FILE}" ]] || die "missing rule sources config: ${RULE_SOURCES_FILE}"
 
+  local ruleset="false"
+  local base_url="${RULESET_BASE_URL}"
+  local ruleset_dir="${RULESET_DIR}"
+  local skip_compile="false"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --ruleset)
+        ruleset="true"
+        ;;
+      --online)
+        warn "--online is deprecated; use --ruleset"
+        ruleset="true"
+        ;;
+      --base-url)
+        shift
+        [[ $# -gt 0 ]] || die "missing value for --base-url"
+        base_url="$1"
+        ;;
+      --ruleset-dir)
+        shift
+        [[ $# -gt 0 ]] || die "missing value for --ruleset-dir"
+        ruleset_dir="$1"
+        ;;
+      --skip-compile)
+        skip_compile="true"
+        ;;
+      *)
+        die "unknown flag for build-rules: $1"
+        ;;
+    esac
+    shift
+  done
+
+  if is_true "${ruleset}"; then
+    if [[ -z "${base_url}" ]]; then
+      base_url="$(guess_ruleset_base_url_from_git || true)"
+    fi
+    [[ -n "${base_url}" ]] || die "RULESET_BASE_URL is empty (or pass --base-url) for --ruleset"
+
+    mkdir -p "$(dirname "${ROUTE_RULES_FILE_RULESET}")" "${ruleset_dir}"
+    local extra_args=()
+    if is_true "${skip_compile}"; then
+      extra_args+=(--skip-compile)
+    fi
+
+    "${PYTHON_BIN}" "${SCRIPTS_DIR}/build_route_rules.py" \
+      --sources-file "${RULE_SOURCES_FILE}" \
+      --output-file "${ROUTE_RULES_FILE_RULESET}" \
+      --mode ruleset \
+      --ruleset-dir "${ruleset_dir}" \
+      --ruleset-base-url "${base_url}" \
+      --ruleset-download-detour "${RULESET_DOWNLOAD_DETOUR}" \
+      --ruleset-tag-prefix "${RULESET_TAG_PREFIX}" \
+      --sing-box-bin "${SING_BOX_BIN}" \
+      "${extra_args[@]}"
+    log "generated ruleset route rules -> ${ROUTE_RULES_FILE_RULESET}"
+    log "generated rule-set files -> ${ruleset_dir}"
+    log "ruleset base url -> ${base_url}"
+    return 0
+  fi
+
   mkdir -p "$(dirname "${ROUTE_RULES_FILE}")"
   "${PYTHON_BIN}" "${SCRIPTS_DIR}/build_route_rules.py" \
     --sources-file "${RULE_SOURCES_FILE}" \
@@ -604,26 +710,96 @@ cmd_build_rules() {
   log "generated route rules -> ${ROUTE_RULES_FILE}"
 }
 
+cmd_build_ruleset() {
+  # Backward compatible alias. Prefer: ./fly build-rules --ruleset ...
+  cmd_build_rules --ruleset "$@"
+}
+
 cmd_build_config() {
   load_env
   need_cmd "${PYTHON_BIN}"
+  local ruleset="false"
+  local target="desktop"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --ruleset)
+        ruleset="true"
+        ;;
+      --online)
+        warn "--online is deprecated; use --ruleset"
+        ruleset="true"
+        ;;
+      --target)
+        shift
+        [[ $# -gt 0 ]] || die "missing value for --target"
+        target="$1"
+        ;;
+      *)
+        die "unknown flag for build-config: $1"
+        ;;
+    esac
+    shift
+  done
+
+  [[ "${target}" =~ ^(desktop|ios)$ ]] || die "unsupported --target: ${target} (use desktop|ios)"
+
+  local rules_file="${ROUTE_RULES_FILE}"
+  if is_true "${ruleset}"; then
+    rules_file="${ROUTE_RULES_FILE_RULESET}"
+  fi
+  local template_file="${BASE_TEMPLATE_FILE}"
+  local output_file="${CONFIG_JSON}"
+  if [[ "${target}" == "ios" ]]; then
+    template_file="${BASE_TEMPLATE_FILE_IOS}"
+    output_file="${CONFIG_JSON_IOS}"
+  fi
+
   [[ -f "${NODES_FILE}" ]] || die "missing nodes file: ${NODES_FILE} (run ./fly extract first)"
-  [[ -f "${ROUTE_RULES_FILE}" ]] || die "missing route rules file: ${ROUTE_RULES_FILE}"
+  [[ -f "${rules_file}" ]] || die "missing route rules file: ${rules_file}"
   [[ -f "${GROUP_STRATEGY_FILE}" ]] || die "missing group strategy file: ${GROUP_STRATEGY_FILE}"
-  [[ -f "${BASE_TEMPLATE_FILE}" ]] || die "missing base template: ${BASE_TEMPLATE_FILE}"
+  [[ -f "${template_file}" ]] || die "missing base template: ${template_file}"
 
   "${PYTHON_BIN}" "${SCRIPTS_DIR}/build_config.py" \
     --nodes-file "${NODES_FILE}" \
-    --rules-file "${ROUTE_RULES_FILE}" \
+    --rules-file "${rules_file}" \
     --groups-file "${GROUP_STRATEGY_FILE}" \
-    --template-file "${BASE_TEMPLATE_FILE}" \
-    --output-file "${CONFIG_JSON}"
-  log "generated config -> ${CONFIG_JSON}"
+    --template-file "${template_file}" \
+    --output-file "${output_file}" \
+    --target "${target}"
+  log "generated config -> ${output_file}"
 }
 
 cmd_pipeline() {
+  local ruleset="false"
+  local target="desktop"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --ruleset)
+        ruleset="true"
+        ;;
+      --online)
+        warn "--online is deprecated; use --ruleset"
+        ruleset="true"
+        ;;
+      --target)
+        shift
+        [[ $# -gt 0 ]] || die "missing value for --target"
+        target="$1"
+        ;;
+      *)
+        die "unknown flag for pipeline: $1"
+        ;;
+    esac
+    shift
+  done
+
   cmd_extract
-  cmd_build_config
+  if is_true "${ruleset}"; then
+    cmd_build_rules --ruleset
+    cmd_build_config --ruleset --target "${target}"
+  else
+    cmd_build_config --target "${target}"
+  fi
 }
 
 cmd_on() {
@@ -746,6 +922,7 @@ main() {
     install-singbox) cmd_install_singbox "$@" ;;
     install-guide) cmd_install_guide "$@" ;;
     build-rules) cmd_build_rules "$@" ;;
+    build-ruleset) cmd_build_ruleset "$@" ;;
     extract) cmd_extract "$@" ;;
     build-config) cmd_build_config "$@" ;;
     pipeline) cmd_pipeline "$@" ;;

@@ -1,0 +1,38 @@
+{
+  "final": "Proxy",
+  "prepend_rules": [],
+  "sources": [
+    {
+      "tag": "Ads",
+      "enabled": true,
+      "rule_set": [
+        "category-ads-all"
+      ],
+      "outbound": "Reject"
+    },
+    {
+      "tag": "China",
+      "enabled": true,
+      "rule_set": [
+        "geosite-cn",
+        "geoip-cn"
+      ],
+      "outbound": "Direct"
+    },
+    {
+      "tag": "OpenAI",
+      "enabled": true,
+      "rule_set": [
+        "geosite-openai"
+      ],
+      "outbound": "AI"
+    }
+  ],
+  "manual_rules": [
+    "DOMAIN-SUFFIX, ai.dev, America",
+    "HOST, aistudio.google.com, America",
+    "GEOIP, CN, Direct"
+  ],
+  "append_rules": []
+}
+
