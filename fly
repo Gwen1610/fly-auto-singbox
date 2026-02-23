@@ -112,6 +112,7 @@ Usage:
   ./fly install-guide
   ./fly build-rules [--ruleset] [--base-url url] [--ruleset-dir dir] [--skip-compile]
   ./fly build-ruleset [--base-url url] [--ruleset-dir dir] [--skip-compile]  # alias of build-rules --ruleset
+  ./fly publish-ruleset [--message msg] [--dry-run]
   ./fly extract
   ./fly build-config [--target desktop|ios] [--ruleset]
   ./fly pipeline [--target desktop|ios] [--ruleset]
@@ -128,6 +129,7 @@ Command summary:
   install-guide  Alias of install-singbox --dry-run
   build-rules   Build route rules from QX/Clash sources (inline by default; use --ruleset for rule-set mode)
   build-ruleset Alias of build-rules --ruleset (kept for backward compatibility)
+  publish-ruleset Stage/commit/push ruleset/ to GitHub
   extract       Extract region nodes only (US/HK/SG/JP, no route rules)
   build-config  Build final config.json by injecting route rules into extracted nodes
   pipeline      Run extract + build-config (or --ruleset: extract + build-rules --ruleset + build-config --ruleset)
@@ -769,6 +771,57 @@ cmd_build_config() {
   log "generated config -> ${output_file}"
 }
 
+cmd_publish_ruleset() {
+  load_env
+  need_cmd git
+
+  local message="chore: publish ruleset"
+  local dry_run="false"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --message)
+        shift
+        [[ $# -gt 0 ]] || die "missing value for --message"
+        message="$1"
+        ;;
+      --dry-run)
+        dry_run="true"
+        ;;
+      *)
+        die "unknown flag for publish-ruleset: $1"
+        ;;
+    esac
+    shift
+  done
+
+  mkdir -p "${RULESET_DIR}"
+  git add -A -- "${RULESET_DIR}" >/dev/null 2>&1 || die "git add failed for ${RULESET_DIR}"
+
+  local staged_changes="false"
+  if ! git diff --cached --quiet; then
+    staged_changes="true"
+  fi
+
+  printf 'dry_run=%s\n' "${dry_run}"
+  printf 'ruleset_dir=%s\n' "${RULESET_DIR}"
+  printf 'staged_changes=%s\n' "${staged_changes}"
+
+  if [[ "${staged_changes}" != "true" ]]; then
+    printf 'result=no changes\n'
+    return 0
+  fi
+
+  if is_true "${dry_run}"; then
+    printf 'result=would commit and push\n'
+    git diff --cached --stat || true
+    return 0
+  fi
+
+  git commit -m "${message}" || die "git commit failed"
+  git push || die "git push failed"
+  printf 'result=published\n'
+}
+
 cmd_pipeline() {
   local ruleset="false"
   local target="desktop"
@@ -923,6 +976,7 @@ main() {
     install-guide) cmd_install_guide "$@" ;;
     build-rules) cmd_build_rules "$@" ;;
     build-ruleset) cmd_build_ruleset "$@" ;;
+    publish-ruleset) cmd_publish_ruleset "$@" ;;
     extract) cmd_extract "$@" ;;
     build-config) cmd_build_config "$@" ;;
     pipeline) cmd_pipeline "$@" ;;

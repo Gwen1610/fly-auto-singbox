@@ -148,7 +148,10 @@ sing-box version
 # 2) 生成 ruleset/*.srs + 小体积的 config/route-rules.ruleset.json
 ./fly build-rules --ruleset
 
-# 3) 把 ruleset/ 目录 git push 到 GitHub 后，再生成最终配置：
+# 3) 发布 ruleset/ 到 GitHub（只提交 ruleset/ 目录）
+./fly publish-ruleset
+
+# 4) 再生成最终配置：
 #    - 电脑端：config.json
 #    - iOS 端：config.ios.json
 ./fly build-config --ruleset

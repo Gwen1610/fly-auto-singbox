@@ -430,6 +430,15 @@ if not isinstance(dns, dict) or not dns.get("servers"):
     raise SystemExit("ASSERT FAIL: expected iOS config to include dns.servers (VT 1.11.4 friendly)")
 PY
 
+mkdir -p "./ruleset"
+echo "dummy" > "./ruleset/dummy.srs"
+pub_out="$(./fly publish-ruleset --dry-run)"
+if ! printf '%s\n' "${pub_out}" | grep -q "staged_changes=true"; then
+  echo "ASSERT FAIL: expected staged_changes=true in publish-ruleset output, got:" >&2
+  printf '%s\n' "${pub_out}" >&2
+  exit 1
+fi
+
 ./fly pipeline
 assert_file_exists "./config.json"
 
