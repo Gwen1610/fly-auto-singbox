@@ -467,6 +467,16 @@ if not any(isinstance(item, dict) and item.get("query_type") == "HTTPS" and item
     raise SystemExit("ASSERT FAIL: expected dns rule query_type=HTTPS -> block-dns")
 if not any(isinstance(item, dict) and item.get("outbound") == "any" and item.get("server") == "default-dns" for item in dns_rules):
     raise SystemExit("ASSERT FAIL: expected dns rule outbound=any -> default-dns")
+if not any(isinstance(item, dict) and item.get("rule_set") in ("geosite-cn", "cnsite", "qx-china") and item.get("server") == "default-dns" for item in dns_rules):
+    raise SystemExit("ASSERT FAIL: expected dns rule_set=cnsite/geosite-cn/qx-china -> default-dns")
+
+route_rules = route.get("rules", [])
+cn_direct_rules = [
+    item for item in route_rules
+    if isinstance(item, dict) and item.get("action") == "direct" and item.get("rule_set") == ["geosite-cn", "geoip-cn"]
+]
+if len(cn_direct_rules) != 1:
+    raise SystemExit(f"ASSERT FAIL: expected exactly one CN direct route rule, got {len(cn_direct_rules)}")
 PY
 
 # Simulate a user-modified iOS template that accidentally contains new DNS schema fields.
@@ -545,6 +555,15 @@ if not any(isinstance(item, dict) and item.get("query_type") == "HTTPS" and item
     raise SystemExit("ASSERT FAIL: expected iOS dns rule query_type=HTTPS -> block-dns")
 if not any(isinstance(item, dict) and item.get("outbound") == "any" and item.get("server") == "default-dns" for item in dns_rules):
     raise SystemExit("ASSERT FAIL: expected iOS dns rule outbound=any -> default-dns")
+if not any(isinstance(item, dict) and item.get("rule_set") in ("geosite-cn", "cnsite", "qx-china") and item.get("server") == "default-dns" for item in dns_rules):
+    raise SystemExit("ASSERT FAIL: expected iOS dns rule_set=cnsite/geosite-cn/qx-china -> default-dns")
+
+cn_direct_rules = [
+    item for item in rules
+    if isinstance(item, dict) and item.get("action") == "direct" and item.get("rule_set") == ["geosite-cn", "geoip-cn"]
+]
+if len(cn_direct_rules) != 1:
+    raise SystemExit(f"ASSERT FAIL: expected exactly one iOS CN direct route rule, got {len(cn_direct_rules)}")
 PY
 
 mkdir -p "./ruleset"

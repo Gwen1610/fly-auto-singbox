@@ -582,17 +582,43 @@ def ensure_connectivity_route(config, user_rules):
         {"ip_is_private": True, "action": "direct"},
     ]
 
+    route_rule_sets = route.get("rule_set")
+    cn_route_tags = []
+    if isinstance(route_rule_sets, list):
+        available_tags = {
+            item.get("tag")
+            for item in route_rule_sets
+            if isinstance(item, dict) and isinstance(item.get("tag"), str)
+        }
+        for tag in ("cnip", "geoip-cn"):
+            if tag in available_tags and tag not in cn_route_tags:
+                cn_route_tags.append(tag)
+                break
+        for tag in ("cnsite", "geosite-cn", "qx-china"):
+            if tag in available_tags and tag not in cn_route_tags:
+                cn_route_tags.append(tag)
+                break
+
     combined = []
     existing = json.dumps(user_rules, ensure_ascii=False, sort_keys=True)
     for item in base_rules:
         if json.dumps(item, ensure_ascii=False, sort_keys=True) not in existing:
             combined.append(item)
     combined.extend(user_rules)
+
+    if cn_route_tags:
+        cn_route_rule = {
+            "rule_set": cn_route_tags if len(cn_route_tags) > 1 else cn_route_tags[0],
+            "action": "direct",
+        }
+        combined_dump = json.dumps(combined, ensure_ascii=False, sort_keys=True)
+        if json.dumps(cn_route_rule, ensure_ascii=False, sort_keys=True) not in combined_dump:
+            combined.append(cn_route_rule)
     return combined
 
 
-def ensure_connectivity_route_ios(user_rules):
-    return ensure_connectivity_route({}, user_rules)
+def ensure_connectivity_route_ios(config, user_rules):
+    return ensure_connectivity_route(config, user_rules)
 
 
 def build_outbounds(grouped, strategy):
@@ -820,15 +846,15 @@ def build_config(base_template, outbounds, final_outbound, rules, extra_rule_set
 
     route_base["final"] = final_outbound
     route_base.pop("default_domain_resolver", None)
+    route_base["rule_set"] = existing_rule_sets
+    config["route"] = route_base
     if str(target).strip().lower() == "ios":
         route_base.pop("default_domain_resolver", None)
-        route_base["rules"] = ensure_connectivity_route_ios(rules)
+        route_base["rules"] = ensure_connectivity_route_ios(config, rules)
     else:
         route_base["rules"] = ensure_connectivity_route(config, rules)
-    route_base["rule_set"] = existing_rule_sets
 
     config["outbounds"] = outbounds
-    config["route"] = route_base
     ensure_inbound_sniff(config)
     if str(target).strip().lower() == "ios":
         ensure_connectivity_dns_ios(config, outbounds)
