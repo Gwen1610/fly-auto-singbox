@@ -81,6 +81,8 @@ OUTBOUND_ALIAS = {
     "block": "block",
 }
 
+VT_DNS_DIRECT_TAG = "dns_direct"
+
 GEOIP_TAG_RE = re.compile(r"^[a-z0-9-]+$", re.IGNORECASE)
 
 
@@ -232,6 +234,8 @@ def resolve_selector_member(raw, available_tags):
         return normalized_region
     if value in available_tags:
         return value
+    if value.lower() == "direct" and VT_DNS_DIRECT_TAG in available_tags:
+        return VT_DNS_DIRECT_TAG
     for tag in available_tags:
         if str(tag).lower() == value.lower():
             return tag
@@ -403,11 +407,17 @@ def ensure_connectivity_dns(config, outbounds):
     if not isinstance(servers, list):
         servers = []
         dns["servers"] = servers
+    else:
+        dns["servers"] = normalize_dns_servers_for_ios_legacy(servers)
+        servers = dns["servers"]
 
-    # New DNS server format (sing-box 1.12+). This avoids the deprecation warning
-    # for legacy `address` DNS server format.
-    google_server = {"tag": "google", "type": "tls", "server": "8.8.8.8", "detour": "Proxy"}
-    local_server = {"tag": "local", "type": "https", "server": "223.5.5.5", "detour": "direct"}
+    # sing-box VT 1.11.x needs legacy DNS server `address` format.
+    google_server = {"tag": "google", "address": "tls://8.8.8.8", "detour": "Proxy"}
+    local_server = {
+        "tag": "local",
+        "address": "https://223.5.5.5/dns-query",
+        "detour": VT_DNS_DIRECT_TAG,
+    }
 
     upsert_dns_server(
         servers,
@@ -417,7 +427,8 @@ def ensure_connectivity_dns(config, outbounds):
     upsert_dns_server(servers, "local", local_server)
 
     dns.setdefault("final", "local")
-    dns.setdefault("strategy", "ipv4_only")
+    dns.setdefault("independent_cache", True)
+    dns.setdefault("strategy", "prefer_ipv4")
 
     rules = dns.get("rules")
     if not isinstance(rules, list):
@@ -452,8 +463,18 @@ def ensure_connectivity_dns(config, outbounds):
         if json.dumps(item, ensure_ascii=False, sort_keys=True) not in existing:
             inject.append(item)
 
-    if inject:
-        dns["rules"] = [*inject, *rules]
+    clash_rules = [
+        {"clash_mode": "direct", "server": "local"},
+        {"clash_mode": "global", "server": "google"},
+    ]
+    existing = json.dumps(rules, ensure_ascii=False, sort_keys=True)
+    tail_inject = []
+    for item in clash_rules:
+        if json.dumps(item, ensure_ascii=False, sort_keys=True) not in existing:
+            tail_inject.append(item)
+
+    if inject or tail_inject:
+        dns["rules"] = [*inject, *rules, *tail_inject]
 
 
 def ensure_connectivity_dns_ios(config, outbounds):
@@ -470,42 +491,8 @@ def ensure_connectivity_dns_ios(config, outbounds):
         dns["servers"] = normalize_dns_servers_for_ios_legacy(servers)
         servers = dns["servers"]
 
-    # iOS sing-box VT (core 1.11.x) uses the legacy DNS server format (`address`)
-    # and will fail to decode the newer `type`/`server` fields.
-    upsert_dns_server(
-        servers,
-        "local",
-        {"tag": "local", "address": "https://223.5.5.5/dns-query", "detour": "direct"},
-    )
-    upsert_dns_server(
-        servers,
-        "google",
-        {"tag": "google", "address": "tls://8.8.8.8", "detour": "Proxy"},
-    )
-
-    dns.setdefault("final", "local")
-    dns.setdefault("strategy", "ipv4_only")
-
-    rules = dns.get("rules")
-    if not isinstance(rules, list):
-        rules = []
-        dns["rules"] = rules
-
-    node_suffixes = collect_node_domain_suffixes(outbounds)
-    prefix_rules = []
-
-    if node_suffixes:
-        prefix_rules.append({"domain_suffix": node_suffixes, "server": "local"})
-    prefix_rules.append({"domain_suffix": GOOGLE_DNS_SUFFIXES, "server": "google"})
-
-    existing = json.dumps(rules, ensure_ascii=False, sort_keys=True)
-    inject = []
-    for item in prefix_rules:
-        if json.dumps(item, ensure_ascii=False, sort_keys=True) not in existing:
-            inject.append(item)
-
-    if inject:
-        dns["rules"] = [*inject, *rules]
+    # For VT 1.11.x, iOS and desktop should share the same legacy DNS shape.
+    ensure_connectivity_dns(config, outbounds)
 
 
 def ensure_connectivity_route(config, user_rules):
@@ -543,19 +530,7 @@ def ensure_connectivity_route(config, user_rules):
 
 
 def ensure_connectivity_route_ios(user_rules):
-    # iOS sing-box VT (core 1.11.x) tends to be more fragile with complex logical rule blocks.
-    # Keep a conservative, minimal rule set close to "quickstart" configs.
-    base_rules = [
-        {"protocol": "dns", "action": "hijack-dns"},
-        {"ip_is_private": True, "action": "direct"},
-    ]
-    combined = []
-    existing = json.dumps(user_rules, ensure_ascii=False, sort_keys=True)
-    for item in base_rules:
-        if json.dumps(item, ensure_ascii=False, sort_keys=True) not in existing:
-            combined.append(item)
-    combined.extend(user_rules)
-    return combined
+    return ensure_connectivity_route({}, user_rules)
 
 
 def build_outbounds(grouped, strategy):
@@ -604,8 +579,8 @@ def build_outbounds(grouped, strategy):
             )
             members = provider_groups
         else:
-            region_default = "direct"
-            members = ["direct"]
+            region_default = VT_DNS_DIRECT_TAG
+            members = [VT_DNS_DIRECT_TAG]
 
         selectors.append(
             {"tag": region, "type": "selector", "outbounds": members, "default": region_default}
@@ -642,7 +617,7 @@ def build_outbounds(grouped, strategy):
         if resolved and resolved not in proxy_members:
             proxy_members.append(resolved)
     if not proxy_members:
-        proxy_members = [*region_tags, *custom_tags] or ["direct"]
+        proxy_members = [*region_tags, *custom_tags] or [VT_DNS_DIRECT_TAG]
 
     proxy_default = resolve_selector_member(strategy["proxy"]["default"], set(proxy_members))
     if not proxy_default:
@@ -656,8 +631,7 @@ def build_outbounds(grouped, strategy):
             "default": proxy_default,
         },
         *selectors,
-        {"type": "direct", "tag": "direct"},
-        {"type": "block", "tag": "block"},
+        {"type": "direct", "tag": VT_DNS_DIRECT_TAG},
         *node_outbounds,
     ]
     return outbounds
@@ -705,6 +679,8 @@ def validate_rules(rules_cfg, outbound_tags):
     final = normalize_outbound(rules_cfg.get("final", "Proxy"))
     if not isinstance(rules, list):
         raise RuntimeError("rules must be an array")
+    if final == "direct" and VT_DNS_DIRECT_TAG in outbound_tags:
+        final = VT_DNS_DIRECT_TAG
     if final not in outbound_tags:
         raise RuntimeError(f"route final outbound not found: {final}")
     for index, rule in enumerate(rules):
@@ -781,13 +757,11 @@ def build_config(base_template, outbounds, final_outbound, rules, extra_rule_set
         existing_tags.add(tag)
 
     route_base["final"] = final_outbound
+    route_base.pop("default_domain_resolver", None)
     if str(target).strip().lower() == "ios":
         route_base.pop("default_domain_resolver", None)
         route_base["rules"] = ensure_connectivity_route_ios(rules)
     else:
-        # sing-box 1.12+ deprecates implicit dial DNS resolver selection and will
-        # require a resolver in 1.14+.
-        route_base.setdefault("default_domain_resolver", "local")
         route_base["rules"] = ensure_connectivity_route(config, rules)
     route_base["rule_set"] = existing_rule_sets
 

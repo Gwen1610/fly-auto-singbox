@@ -366,10 +366,10 @@ for item in rules:
         raise SystemExit("ASSERT FAIL: expected no legacy special outbounds in route rules")
 
 tags = {item.get("tag") for item in cfg.get("outbounds", []) if isinstance(item, dict)}
-if "direct" not in tags:
-    raise SystemExit("ASSERT FAIL: expected direct outbound for DNS detour")
-if "block" not in tags:
-    raise SystemExit("ASSERT FAIL: expected block outbound for Reject mapping")
+if "dns_direct" not in tags:
+    raise SystemExit("ASSERT FAIL: expected dns_direct outbound for VT-compatible DNS detour")
+if "direct" in tags or "block" in tags:
+    raise SystemExit("ASSERT FAIL: expected no legacy direct/block outbounds in final config")
 
 route_sets = cfg.get("route", {}).get("rule_set", [])
 if not any(isinstance(item, dict) and item.get("tag") == "geoip-cn" for item in route_sets):
@@ -435,13 +435,17 @@ for tag in ("qx-openai", "qx-youtube", "qx-custom", "qx-rejectset"):
         raise SystemExit(f"ASSERT FAIL: expected {tag} to be present in config.route.rule_set after build-ruleset")
 
 route = cfg.get("route", {})
-if not isinstance(route, dict) or route.get("default_domain_resolver") != "local":
-    raise SystemExit("ASSERT FAIL: expected desktop route.default_domain_resolver=local")
+if isinstance(route, dict) and "default_domain_resolver" in route:
+    raise SystemExit("ASSERT FAIL: desktop VT config should not include default_domain_resolver")
 
 dns = cfg.get("dns")
 servers = dns.get("servers", []) if isinstance(dns, dict) else []
-if not any(isinstance(item, dict) and isinstance(item.get("type"), str) for item in servers):
-    raise SystemExit("ASSERT FAIL: expected desktop dns.servers to use new type/server format")
+if not any(isinstance(item, dict) and isinstance(item.get("address"), str) for item in servers):
+    raise SystemExit("ASSERT FAIL: expected desktop VT config to use legacy dns address format")
+if any(isinstance(item, dict) and "type" in item for item in servers):
+    raise SystemExit("ASSERT FAIL: desktop VT config should not include dns.servers[].type")
+if not any(isinstance(item, dict) and item.get("tag") == "local" and item.get("detour") == "dns_direct" for item in servers):
+    raise SystemExit("ASSERT FAIL: expected local DNS server detour=dns_direct")
 PY
 
 # Simulate a user-modified iOS template that accidentally contains new DNS schema fields.
@@ -492,6 +496,16 @@ if any(isinstance(item, dict) and "type" in item for item in servers):
 route = cfg.get("route", {})
 if isinstance(route, dict) and "default_domain_resolver" in route:
     raise SystemExit("ASSERT FAIL: iOS route should not include default_domain_resolver (VT 1.11.4 decode failure)")
+rules = route.get("rules", []) if isinstance(route, dict) else []
+if not any(
+    isinstance(item, dict)
+    and item.get("action") == "reject"
+    and any(isinstance(rule, dict) and rule.get("protocol") == "quic" for rule in item.get("rules", []))
+    for item in rules
+):
+    raise SystemExit("ASSERT FAIL: expected iOS VT config to include QUIC reject logical rule")
+if not any(isinstance(item, dict) and item.get("tag") == "local" and item.get("detour") == "dns_direct" for item in servers):
+    raise SystemExit("ASSERT FAIL: expected iOS local DNS server detour=dns_direct")
 PY
 
 mkdir -p "./ruleset"

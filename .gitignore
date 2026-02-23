@@ -17,3 +17,4 @@ __pycache__/
 /config.*.json
 ruleset/*.json
 example/*.config
+example/correct.json
