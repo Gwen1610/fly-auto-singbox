@@ -411,24 +411,37 @@ def ensure_connectivity_dns(config, outbounds):
         dns["servers"] = normalize_dns_servers_for_ios_legacy(servers)
         servers = dns["servers"]
 
-    # sing-box VT 1.11.x needs legacy DNS server `address` format.
-    google_server = {"tag": "google", "address": "tls://8.8.8.8", "detour": "Proxy"}
-    local_server = {
-        "tag": "local",
-        "address": "https://223.5.5.5/dns-query",
-        "detour": VT_DNS_DIRECT_TAG,
-    }
+    # Bulianglin-style DNS mode (legacy-address format, VT 1.11.x compatible):
+    # - local/default resolvers go through dedicated DNS direct detour
+    # - remote DoH resolver uses bootstrap resolver to avoid DNS recursion/loop
+    managed_servers = [
+        {"tag": "default-dns", "address": "223.5.5.5", "detour": VT_DNS_DIRECT_TAG},
+        {"tag": "system-dns", "address": "local", "detour": VT_DNS_DIRECT_TAG},
+        {"tag": "block-dns", "address": "rcode://name_error"},
+        {
+            "tag": "google",
+            "address": "https://dns.google/dns-query",
+            "address_resolver": "default-dns",
+            "address_strategy": "ipv4_only",
+            "strategy": "ipv4_only",
+            "client_subnet": "1.0.1.0",
+        },
+    ]
+    managed_server_tags = {item["tag"] for item in managed_servers}
+    # Remove template leftovers (`local`, old `google`) and reinsert managed servers in a stable order.
+    preserved_servers = [
+        item
+        for item in servers
+        if isinstance(item, dict) and str(item.get("tag", "")).strip() not in (managed_server_tags | {"local"})
+    ]
+    dns["servers"] = [*deepcopy(managed_servers), *preserved_servers]
+    servers = dns["servers"]
 
-    upsert_dns_server(
-        servers,
-        "google",
-        google_server,
-    )
-    upsert_dns_server(servers, "local", local_server)
-
-    dns.setdefault("final", "local")
-    dns.setdefault("independent_cache", True)
-    dns.setdefault("strategy", "prefer_ipv4")
+    dns["final"] = "google"
+    dns["strategy"] = "ipv4_only"
+    dns.setdefault("disable_cache", False)
+    dns.setdefault("disable_expire", False)
+    dns.setdefault("independent_cache", False)
 
     rules = dns.get("rules")
     if not isinstance(rules, list):
@@ -444,7 +457,7 @@ def ensure_connectivity_dns(config, outbounds):
                 "type": "logical",
                 "mode": "or",
                 "rules": [{"domain_suffix": suffix} for suffix in node_suffixes],
-                "server": "local",
+                "server": "default-dns",
             }
         )
     prefix_rules.append(
@@ -456,25 +469,74 @@ def ensure_connectivity_dns(config, outbounds):
         }
     )
 
-    # Avoid repeatedly injecting when users run build-config multiple times.
-    existing = json.dumps(rules, ensure_ascii=False, sort_keys=True)
-    inject = []
-    for item in prefix_rules:
-        if json.dumps(item, ensure_ascii=False, sort_keys=True) not in existing:
-            inject.append(item)
+    cn_dns_rule = None
+    route_rule_sets = config.get("route", {}).get("rule_set", [])
+    if isinstance(route_rule_sets, list):
+        route_rule_set_tags = {
+            item.get("tag")
+            for item in route_rule_sets
+            if isinstance(item, dict) and isinstance(item.get("tag"), str)
+        }
+        for tag in ("cnsite", "geosite-cn", "qx-china"):
+            if tag in route_rule_set_tags:
+                cn_dns_rule = {"rule_set": tag, "server": "default-dns"}
+                break
 
-    clash_rules = [
-        {"clash_mode": "direct", "server": "local"},
+    managed_rules = [
+        *prefix_rules,
+        {"query_type": "HTTPS", "server": "block-dns"},
+        {"clash_mode": "direct", "server": "default-dns"},
         {"clash_mode": "global", "server": "google"},
     ]
-    existing = json.dumps(rules, ensure_ascii=False, sort_keys=True)
-    tail_inject = []
-    for item in clash_rules:
-        if json.dumps(item, ensure_ascii=False, sort_keys=True) not in existing:
-            tail_inject.append(item)
+    if cn_dns_rule:
+        managed_rules.append(cn_dns_rule)
+    managed_rules.append({"outbound": "any", "server": "default-dns"})
 
-    if inject or tail_inject:
-        dns["rules"] = [*inject, *rules, *tail_inject]
+    managed_rule_keys = []
+    for item in managed_rules:
+        if "clash_mode" in item:
+            managed_rule_keys.append(("clash_mode", item["clash_mode"]))
+        elif "query_type" in item:
+            managed_rule_keys.append(("query_type", item["query_type"]))
+        elif item.get("outbound") == "any":
+            managed_rule_keys.append(("outbound", "any"))
+        elif "rule_set" in item:
+            managed_rule_keys.append(("rule_set", item["rule_set"]))
+        elif item.get("type") == "logical" and item.get("server") in {"default-dns", "google"}:
+            suffixes = []
+            for rule in item.get("rules", []):
+                if isinstance(rule, dict) and isinstance(rule.get("domain_suffix"), str):
+                    suffixes.append(rule["domain_suffix"])
+            managed_rule_keys.append(("logical_domain_suffix", tuple(sorted(suffixes)), item.get("server")))
+        else:
+            managed_rule_keys.append(("raw", json.dumps(item, ensure_ascii=False, sort_keys=True)))
+
+    def is_managed_dns_rule(item):
+        if not isinstance(item, dict):
+            return False
+        if "clash_mode" in item:
+            return ("clash_mode", item.get("clash_mode")) in managed_rule_keys
+        if "query_type" in item:
+            return ("query_type", item.get("query_type")) in managed_rule_keys
+        if item.get("outbound") == "any":
+            return ("outbound", "any") in managed_rule_keys
+        if "rule_set" in item and isinstance(item.get("rule_set"), str):
+            return ("rule_set", item.get("rule_set")) in managed_rule_keys
+        if item.get("type") == "logical" and item.get("server") in {"default-dns", "local", "google"}:
+            suffixes = []
+            for rule in item.get("rules", []):
+                if isinstance(rule, dict) and isinstance(rule.get("domain_suffix"), str):
+                    suffixes.append(rule["domain_suffix"])
+            if suffixes:
+                return (
+                    "logical_domain_suffix",
+                    tuple(sorted(suffixes)),
+                    "default-dns" if item.get("server") == "local" else item.get("server"),
+                ) in managed_rule_keys
+        return False
+
+    preserved_rules = [item for item in rules if not is_managed_dns_rule(item)]
+    dns["rules"] = [*managed_rules, *preserved_rules]
 
 
 def ensure_connectivity_dns_ios(config, outbounds):

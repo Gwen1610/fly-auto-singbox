@@ -444,8 +444,29 @@ if not any(isinstance(item, dict) and isinstance(item.get("address"), str) for i
     raise SystemExit("ASSERT FAIL: expected desktop VT config to use legacy dns address format")
 if any(isinstance(item, dict) and "type" in item for item in servers):
     raise SystemExit("ASSERT FAIL: desktop VT config should not include dns.servers[].type")
-if not any(isinstance(item, dict) and item.get("tag") == "local" and item.get("detour") == "dns_direct" for item in servers):
-    raise SystemExit("ASSERT FAIL: expected local DNS server detour=dns_direct")
+server_by_tag = {item.get("tag"): item for item in servers if isinstance(item, dict)}
+for tag in ("default-dns", "system-dns", "block-dns", "google"):
+    if tag not in server_by_tag:
+        raise SystemExit(f"ASSERT FAIL: expected dns server {tag} in desktop VT config")
+tags_in_order = [item.get("tag") for item in servers if isinstance(item, dict)]
+if "local" in tags_in_order:
+    raise SystemExit("ASSERT FAIL: desktop Bulianglin DNS mode should remove legacy local DNS server")
+if tags_in_order.index("default-dns") > tags_in_order.index("google"):
+    raise SystemExit("ASSERT FAIL: default-dns must appear before google for address_resolver bootstrap")
+if server_by_tag["default-dns"].get("detour") != "dns_direct":
+    raise SystemExit("ASSERT FAIL: expected default-dns detour=dns_direct")
+if server_by_tag["system-dns"].get("detour") != "dns_direct":
+    raise SystemExit("ASSERT FAIL: expected system-dns detour=dns_direct")
+if dns.get("final") != "google":
+    raise SystemExit("ASSERT FAIL: expected desktop dns.final=google (Bulianglin style)")
+if dns.get("strategy") != "ipv4_only":
+    raise SystemExit("ASSERT FAIL: expected desktop dns.strategy=ipv4_only")
+
+dns_rules = dns.get("rules", [])
+if not any(isinstance(item, dict) and item.get("query_type") == "HTTPS" and item.get("server") == "block-dns" for item in dns_rules):
+    raise SystemExit("ASSERT FAIL: expected dns rule query_type=HTTPS -> block-dns")
+if not any(isinstance(item, dict) and item.get("outbound") == "any" and item.get("server") == "default-dns" for item in dns_rules):
+    raise SystemExit("ASSERT FAIL: expected dns rule outbound=any -> default-dns")
 PY
 
 # Simulate a user-modified iOS template that accidentally contains new DNS schema fields.
@@ -492,6 +513,21 @@ if not any(isinstance(item, dict) and isinstance(item.get("address"), str) for i
     raise SystemExit("ASSERT FAIL: expected iOS dns.servers to use legacy address format (no type/server)")
 if any(isinstance(item, dict) and "type" in item for item in servers):
     raise SystemExit("ASSERT FAIL: iOS dns.servers should not include 'type' field (VT 1.11.4 decode failure)")
+server_by_tag = {item.get("tag"): item for item in servers if isinstance(item, dict)}
+for tag in ("default-dns", "system-dns", "block-dns", "google"):
+    if tag not in server_by_tag:
+        raise SystemExit(f"ASSERT FAIL: expected dns server {tag} in iOS VT config")
+tags_in_order = [item.get("tag") for item in servers if isinstance(item, dict)]
+if "local" in tags_in_order:
+    raise SystemExit("ASSERT FAIL: iOS Bulianglin DNS mode should remove legacy local DNS server")
+if tags_in_order.index("default-dns") > tags_in_order.index("google"):
+    raise SystemExit("ASSERT FAIL: iOS default-dns must appear before google for address_resolver bootstrap")
+if server_by_tag["default-dns"].get("detour") != "dns_direct":
+    raise SystemExit("ASSERT FAIL: expected iOS default-dns detour=dns_direct")
+if server_by_tag["system-dns"].get("detour") != "dns_direct":
+    raise SystemExit("ASSERT FAIL: expected iOS system-dns detour=dns_direct")
+if dns.get("final") != "google":
+    raise SystemExit("ASSERT FAIL: expected iOS dns.final=google (Bulianglin style)")
 
 route = cfg.get("route", {})
 if isinstance(route, dict) and "default_domain_resolver" in route:
@@ -504,8 +540,11 @@ if not any(
     for item in rules
 ):
     raise SystemExit("ASSERT FAIL: expected iOS VT config to include QUIC reject logical rule")
-if not any(isinstance(item, dict) and item.get("tag") == "local" and item.get("detour") == "dns_direct" for item in servers):
-    raise SystemExit("ASSERT FAIL: expected iOS local DNS server detour=dns_direct")
+dns_rules = dns.get("rules", [])
+if not any(isinstance(item, dict) and item.get("query_type") == "HTTPS" and item.get("server") == "block-dns" for item in dns_rules):
+    raise SystemExit("ASSERT FAIL: expected iOS dns rule query_type=HTTPS -> block-dns")
+if not any(isinstance(item, dict) and item.get("outbound") == "any" and item.get("server") == "default-dns" for item in dns_rules):
+    raise SystemExit("ASSERT FAIL: expected iOS dns rule outbound=any -> default-dns")
 PY
 
 mkdir -p "./ruleset"
