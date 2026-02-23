@@ -320,6 +320,11 @@ def main():
         action="store_true",
         help="Skip compiling .json to .srs (useful for tests). Still emits route-rules.json referencing .srs by URL.",
     )
+    parser.add_argument(
+        "--compact",
+        action="store_true",
+        help="Write compact JSON (no indentation). Useful when some clients are slow or crash on large configs.",
+    )
     args = parser.parse_args()
 
     sources_path = Path(args.sources_file).resolve()
@@ -465,55 +470,14 @@ def main():
     if route_rule_sets:
         output["rule_set"] = route_rule_sets
 
-    def pretty_sibling_path(path: Path) -> Path:
-        name = path.name
-        if name.endswith(".json"):
-            return path.with_name(name[: -len(".json")] + ".pretty.json")
-        return path.with_name(name + ".pretty.json")
-
-    def estimate_rule_items(rules: List[dict]) -> int:
-        total = 0
-        keys = {
-            "domain_suffix",
-            "domain",
-            "domain_keyword",
-            "domain_regex",
-            "ip_cidr",
-            "source_ip_cidr",
-            "port",
-            "source_port",
-            "rule_set",
-        }
-        for rule in rules:
-            if not isinstance(rule, dict):
-                continue
-            for key in keys:
-                value = rule.get(key)
-                if isinstance(value, list):
-                    total += len(value)
-                elif isinstance(value, str) and value:
-                    total += 1
-        return total
-
     output_path = Path(args.output_file).resolve()
-    total_items = estimate_rule_items(output.get("rules", []))
-    # Auto-compact huge rule files for better iOS client compatibility.
-    compact = total_items >= 20000
-    if compact:
-        print(f"info: compact_json=true (estimated_items={total_items})", file=sys.stderr)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with output_path.open("w", encoding="utf-8") as f:
-        if compact:
+        if args.compact:
             json.dump(output, f, ensure_ascii=False, separators=(",", ":"))
         else:
             json.dump(output, f, ensure_ascii=False, indent=2)
         f.write("\n")
-    if compact:
-        pretty_path = pretty_sibling_path(output_path)
-        with pretty_path.open("w", encoding="utf-8") as f:
-            json.dump(output, f, ensure_ascii=False, indent=2)
-            f.write("\n")
-        print(f"saved pretty preview: {pretty_path}")
     print(f"saved route rules: {Path(args.output_file).resolve()}")
     print(f"generated rule blocks: {len(built_rules) + len(manual_blocks)}")
 

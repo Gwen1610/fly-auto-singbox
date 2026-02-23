@@ -110,12 +110,12 @@ Usage:
   ./fly check-singbox
   ./fly install-singbox [--version v] [--os linux|darwin] [--arch amd64|arm64] [--install-dir dir] [--dry-run] [--force]
   ./fly install-guide
-  ./fly build-rules [--ruleset] [--base-url url] [--ruleset-dir dir] [--skip-compile]
+  ./fly build-rules [--ruleset] [--compact] [--base-url url] [--ruleset-dir dir] [--skip-compile]
   ./fly build-ruleset [--base-url url] [--ruleset-dir dir] [--skip-compile]  # alias of build-rules --ruleset
   ./fly publish-ruleset [--message msg] [--dry-run]
   ./fly extract
-  ./fly build-config [--target desktop|ios] [--ruleset]
-  ./fly pipeline [--target desktop|ios] [--ruleset]
+  ./fly build-config [--target desktop|ios] [--ruleset] [--compact]
+  ./fly pipeline [--target desktop|ios] [--ruleset] [--compact]
   ./fly on
   ./fly off
   ./fly status
@@ -648,6 +648,7 @@ cmd_build_rules() {
   local base_url="${RULESET_BASE_URL}"
   local ruleset_dir="${RULESET_DIR}"
   local skip_compile="false"
+  local compact="false"
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --ruleset)
@@ -669,6 +670,9 @@ cmd_build_rules() {
         ;;
       --skip-compile)
         skip_compile="true"
+        ;;
+      --compact)
+        compact="true"
         ;;
       *)
         die "unknown flag for build-rules: $1"
@@ -700,6 +704,9 @@ cmd_build_rules() {
       --ruleset-tag-prefix "${RULESET_TAG_PREFIX}"
       --sing-box-bin "${SING_BOX_BIN}"
     )
+    if is_true "${compact}"; then
+      cmd+=(--compact)
+    fi
     # NOTE: macOS default bash is 3.2. With `set -u`, expanding an empty array
     # like "${extra_args[@]}" will raise "unbound variable". Guard it.
     if ((${#extra_args[@]})); then
@@ -713,9 +720,15 @@ cmd_build_rules() {
   fi
 
   mkdir -p "$(dirname "${ROUTE_RULES_FILE}")"
-  "${PYTHON_BIN}" "${SCRIPTS_DIR}/build_route_rules.py" \
-    --sources-file "${RULE_SOURCES_FILE}" \
+  local -a cmd=(
+    "${PYTHON_BIN}" "${SCRIPTS_DIR}/build_route_rules.py"
+    --sources-file "${RULE_SOURCES_FILE}"
     --output-file "${ROUTE_RULES_FILE}"
+  )
+  if is_true "${compact}"; then
+    cmd+=(--compact)
+  fi
+  "${cmd[@]}"
   log "generated route rules -> ${ROUTE_RULES_FILE}"
 }
 
@@ -729,6 +742,7 @@ cmd_build_config() {
   need_cmd "${PYTHON_BIN}"
   local ruleset="false"
   local target="desktop"
+  local compact="false"
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --ruleset)
@@ -742,6 +756,9 @@ cmd_build_config() {
         shift
         [[ $# -gt 0 ]] || die "missing value for --target"
         target="$1"
+        ;;
+      --compact)
+        compact="true"
         ;;
       *)
         die "unknown flag for build-config: $1"
@@ -768,13 +785,19 @@ cmd_build_config() {
   [[ -f "${GROUP_STRATEGY_FILE}" ]] || die "missing group strategy file: ${GROUP_STRATEGY_FILE}"
   [[ -f "${template_file}" ]] || die "missing base template: ${template_file}"
 
-  "${PYTHON_BIN}" "${SCRIPTS_DIR}/build_config.py" \
-    --nodes-file "${NODES_FILE}" \
-    --rules-file "${rules_file}" \
-    --groups-file "${GROUP_STRATEGY_FILE}" \
-    --template-file "${template_file}" \
-    --output-file "${output_file}" \
+  local -a cmd=(
+    "${PYTHON_BIN}" "${SCRIPTS_DIR}/build_config.py"
+    --nodes-file "${NODES_FILE}"
+    --rules-file "${rules_file}"
+    --groups-file "${GROUP_STRATEGY_FILE}"
+    --template-file "${template_file}"
+    --output-file "${output_file}"
     --target "${target}"
+  )
+  if is_true "${compact}"; then
+    cmd+=(--compact)
+  fi
+  "${cmd[@]}"
   log "generated config -> ${output_file}"
 }
 
@@ -879,6 +902,7 @@ cmd_publish_ruleset() {
 cmd_pipeline() {
   local ruleset="false"
   local target="desktop"
+  local compact="false"
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --ruleset)
@@ -893,6 +917,9 @@ cmd_pipeline() {
         [[ $# -gt 0 ]] || die "missing value for --target"
         target="$1"
         ;;
+      --compact)
+        compact="true"
+        ;;
       *)
         die "unknown flag for pipeline: $1"
         ;;
@@ -902,10 +929,19 @@ cmd_pipeline() {
 
   cmd_extract
   if is_true "${ruleset}"; then
-    cmd_build_rules --ruleset
-    cmd_build_config --ruleset --target "${target}"
+    if is_true "${compact}"; then
+      cmd_build_rules --ruleset --compact
+      cmd_build_config --ruleset --target "${target}" --compact
+    else
+      cmd_build_rules --ruleset
+      cmd_build_config --ruleset --target "${target}"
+    fi
   else
-    cmd_build_config --target "${target}"
+    if is_true "${compact}"; then
+      cmd_build_config --target "${target}" --compact
+    else
+      cmd_build_config --target "${target}"
+    fi
   fi
 }
 

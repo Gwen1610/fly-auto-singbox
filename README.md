@@ -188,8 +188,10 @@ sing-box version
 - `build-rules` 的 `sources[]` 现在支持两种写法（二选一）：
   - `url`: 继续使用 `.list/.yaml/.txt` 规则源（会展开成 `domain/domain_suffix/...` 数组）
   - `rule_set`: 直接引用 sing-box 的规则集标签（更小、更快、对部分客户端更友好）
-- 当规则源非常大（例如 blackmatrix7 的 Advertising/Privacy 等），`build-rules` 和 `build-config` 会自动输出**压缩 JSON（无缩进）**，以减少文件体积，降低 iOS/VT 客户端因解析耗时/内存导致的启动失败概率。
-- 当触发自动压缩时，会额外输出一个同名的 `*.pretty.json` 作为“可读预览版”（例如 `config.pretty.json`、`config/route-rules.pretty.json`），导入客户端请仍使用非 pretty 的原文件。
+- 默认输出为带缩进的 JSON，便于人工阅读与维护。
+- 如果你的客户端在导入/启动时对大 JSON 很慢或会崩溃，可以在生成时加 `--compact` 输出无缩进的紧凑 JSON：
+  - `./fly build-rules --compact`
+  - `./fly build-config --compact`
 
 `rule_set` 示例（无需下载/展开大列表）：
 

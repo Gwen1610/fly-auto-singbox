@@ -763,6 +763,11 @@ def main():
     parser.add_argument("--template-file", required=True)
     parser.add_argument("--output-file", required=True)
     parser.add_argument("--target", choices=["desktop", "ios"], default="desktop")
+    parser.add_argument(
+        "--compact",
+        action="store_true",
+        help="Write compact JSON (no indentation). Useful when some clients are slow or crash on large configs.",
+    )
     args = parser.parse_args()
 
     nodes = load_json(Path(args.nodes_file).resolve())
@@ -788,61 +793,13 @@ def main():
         target=args.target,
     )
     output_path = Path(args.output_file).resolve()
-
-    def pretty_sibling_path(path: Path) -> Path:
-        name = path.name
-        if name.endswith(".json"):
-            return path.with_name(name[: -len(".json")] + ".pretty.json")
-        return path.with_name(name + ".pretty.json")
-
-    def estimate_route_items(route: dict) -> int:
-        total = 0
-        rules = route.get("rules", [])
-        if isinstance(rules, list):
-            keys = {
-                "domain_suffix",
-                "domain",
-                "domain_keyword",
-                "domain_regex",
-                "ip_cidr",
-                "source_ip_cidr",
-                "port",
-                "source_port",
-                "rule_set",
-            }
-            for rule in rules:
-                if not isinstance(rule, dict):
-                    continue
-                for key in keys:
-                    value = rule.get(key)
-                    if isinstance(value, list):
-                        total += len(value)
-                    elif isinstance(value, str) and value:
-                        total += 1
-        rule_sets = route.get("rule_set", [])
-        if isinstance(rule_sets, list):
-            total += len(rule_sets)
-        return total
-
-    # Auto-compact huge config for iOS clients that may time out / crash on very large JSON with indentation.
-    estimated_items = estimate_route_items(config.get("route", {}))
-    compact = estimated_items >= 20000
-    if compact:
-        print(f"info: compact_json=true (estimated_items={estimated_items})", file=sys.stderr)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with output_path.open("w", encoding="utf-8") as f:
-        if compact:
+        if args.compact:
             json.dump(config, f, ensure_ascii=False, separators=(",", ":"))
         else:
             json.dump(config, f, ensure_ascii=False, indent=2)
         f.write("\n")
-
-    if compact:
-        pretty_path = pretty_sibling_path(output_path)
-        with pretty_path.open("w", encoding="utf-8") as f:
-            json.dump(config, f, ensure_ascii=False, indent=2)
-            f.write("\n")
-        print(f"saved pretty preview: {pretty_path}")
 
     region_counts = {region: sum(len(items) for items in grouped[region].values()) for region in grouped}
     print(f"region counts: {region_counts}")
