@@ -700,7 +700,11 @@ cmd_build_rules() {
       --ruleset-tag-prefix "${RULESET_TAG_PREFIX}"
       --sing-box-bin "${SING_BOX_BIN}"
     )
-    cmd+=("${extra_args[@]}")
+    # NOTE: macOS default bash is 3.2. With `set -u`, expanding an empty array
+    # like "${extra_args[@]}" will raise "unbound variable". Guard it.
+    if ((${#extra_args[@]})); then
+      cmd+=("${extra_args[@]}")
+    fi
     "${cmd[@]}"
     log "generated ruleset route rules -> ${ROUTE_RULES_FILE_RULESET}"
     log "generated rule-set files -> ${ruleset_dir}"

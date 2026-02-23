@@ -126,6 +126,22 @@ if [[ "${1:-}" == "run" ]]; then
     sleep 1
   done
 fi
+if [[ "${1:-}" == "rule-set" && "${2:-}" == "compile" ]]; then
+  # Args: rule-set compile <in> -o <out>
+  out=""
+  for ((i=1; i<=$#; i++)); do
+    arg="${!i}"
+    if [[ "${arg}" == "-o" ]]; then
+      j=$((i+1))
+      out="${!j}"
+      break
+    fi
+  done
+  [[ -n "${out}" ]] || { echo "mock sing-box missing -o" >&2; exit 2; }
+  mkdir -p "$(dirname "${out}")"
+  printf 'dummy' > "${out}"
+  exit 0
+fi
 if [[ "${1:-}" == "version" ]]; then
   echo "sing-box version 1.12.20"
   exit 0
@@ -356,9 +372,11 @@ if not any(isinstance(item, dict) and item.get("tag") == "geosite-cn" for item i
 PY
 
 # Build rule-set files from QX sources and reference them by remote URLs (small config for iOS clients).
-./fly build-rules --ruleset --base-url "https://example.com/ruleset" --ruleset-dir "./ruleset" --skip-compile
+./fly build-rules --ruleset --base-url "https://example.com/ruleset" --ruleset-dir "./ruleset"
 assert_file_exists "./ruleset/qx-openai.json"
 assert_file_exists "./ruleset/qx-youtube.json"
+assert_file_exists "./ruleset/qx-openai.srs"
+assert_file_exists "./ruleset/qx-youtube.srs"
 
 python3 - <<'PY'
 import json
