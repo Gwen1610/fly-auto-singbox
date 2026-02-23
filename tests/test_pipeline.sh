@@ -358,6 +358,13 @@ if not any(
 ):
     raise SystemExit("ASSERT FAIL: expected QUIC reject rule to be present")
 
+# sing-box 1.11+ deprecates legacy special outbounds (e.g. `block`/`dns`) in route rules.
+for item in rules:
+    if not isinstance(item, dict):
+        continue
+    if item.get("outbound") in {"block", "dns"}:
+        raise SystemExit("ASSERT FAIL: expected no legacy special outbounds in route rules")
+
 tags = {item.get("tag") for item in cfg.get("outbounds", []) if isinstance(item, dict)}
 if "direct" not in tags:
     raise SystemExit("ASSERT FAIL: expected direct outbound for DNS detour")

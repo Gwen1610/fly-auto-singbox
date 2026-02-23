@@ -507,7 +507,7 @@ def ensure_connectivity_route(config, user_rules):
             "rules": [{"protocol": "quic"}, {"network": "udp", "port": 443}],
             "action": "reject",
         },
-        {"ip_is_private": True, "outbound": "direct"},
+        {"ip_is_private": True, "action": "direct"},
     ]
 
     combined = []
@@ -524,7 +524,7 @@ def ensure_connectivity_route_ios(user_rules):
     # Keep a conservative, minimal rule set close to "quickstart" configs.
     base_rules = [
         {"protocol": "dns", "action": "hijack-dns"},
-        {"ip_is_private": True, "outbound": "direct"},
+        {"ip_is_private": True, "action": "direct"},
     ]
     combined = []
     existing = json.dumps(user_rules, ensure_ascii=False, sort_keys=True)
@@ -689,10 +689,29 @@ def validate_rules(rules_cfg, outbound_tags):
             raise RuntimeError(f"rules[{index}] must be object")
         ensure_legacy_geoip_compat(rule)
         outbound = normalize_outbound(rule.get("outbound"))
-        if "outbound" in rule:
-            rule["outbound"] = outbound
-        if outbound and outbound not in outbound_tags:
-            raise RuntimeError(f"rules[{index}] outbound not found: {outbound}")
+        if outbound:
+            # sing-box 1.11+ deprecates legacy special outbounds (`block`/`dns`) and
+            # recommends migrating them to rule actions.
+            # - outbound=block -> action=reject
+            # - outbound=dns   -> action=hijack-dns (see migration guide for sniff + hijack-dns)
+            # Additionally, we normalize outbound=direct to action=direct to keep configs consistent.
+            if outbound == "block":
+                rule.pop("outbound", None)
+                rule.setdefault("action", "reject")
+                outbound = ""
+            elif outbound == "dns":
+                rule.pop("outbound", None)
+                rule.setdefault("action", "hijack-dns")
+                outbound = ""
+            elif outbound == "direct":
+                rule.pop("outbound", None)
+                rule.setdefault("action", "direct")
+                outbound = ""
+            else:
+                if "outbound" in rule:
+                    rule["outbound"] = outbound
+                if outbound not in outbound_tags:
+                    raise RuntimeError(f"rules[{index}] outbound not found: {outbound}")
     return final, rules
 
 
