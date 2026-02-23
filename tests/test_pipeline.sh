@@ -433,6 +433,15 @@ if len(qx_tags) != 6:
 for tag in ("qx-openai", "qx-youtube", "qx-custom", "qx-rejectset"):
     if tag not in tags:
         raise SystemExit(f"ASSERT FAIL: expected {tag} to be present in config.route.rule_set after build-ruleset")
+
+route = cfg.get("route", {})
+if not isinstance(route, dict) or route.get("default_domain_resolver") != "local":
+    raise SystemExit("ASSERT FAIL: expected desktop route.default_domain_resolver=local")
+
+dns = cfg.get("dns")
+servers = dns.get("servers", []) if isinstance(dns, dict) else []
+if not any(isinstance(item, dict) and isinstance(item.get("type"), str) for item in servers):
+    raise SystemExit("ASSERT FAIL: expected desktop dns.servers to use new type/server format")
 PY
 
 ./fly build-config --target ios --ruleset
@@ -453,6 +462,16 @@ if "mixed" in types:
 dns = cfg.get("dns")
 if not isinstance(dns, dict) or not dns.get("servers"):
     raise SystemExit("ASSERT FAIL: expected iOS config to include dns.servers (VT 1.11.4 friendly)")
+
+servers = dns.get("servers", [])
+if not any(isinstance(item, dict) and isinstance(item.get("address"), str) for item in servers):
+    raise SystemExit("ASSERT FAIL: expected iOS dns.servers to use legacy address format (no type/server)")
+if any(isinstance(item, dict) and "type" in item for item in servers):
+    raise SystemExit("ASSERT FAIL: iOS dns.servers should not include 'type' field (VT 1.11.4 decode failure)")
+
+route = cfg.get("route", {})
+if isinstance(route, dict) and "default_domain_resolver" in route:
+    raise SystemExit("ASSERT FAIL: iOS route should not include default_domain_resolver (VT 1.11.4 decode failure)")
 PY
 
 mkdir -p "./ruleset"

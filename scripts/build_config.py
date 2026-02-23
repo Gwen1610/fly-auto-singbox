@@ -377,11 +377,10 @@ def ensure_connectivity_dns(config, outbounds):
         servers = []
         dns["servers"] = servers
 
-    # Use legacy DNS server format by default for better client/core compatibility.
-    # (Some iOS clients/core versions, e.g. VT 1.11.x, will fail to decode the new
-    # `dns.servers[].type/server` format with: unknown field "type".)
-    google_server = {"tag": "google", "address": "tls://8.8.8.8", "detour": "Proxy"}
-    local_server = {"tag": "local", "address": "https://223.5.5.5/dns-query", "detour": "direct"}
+    # New DNS server format (sing-box 1.12+). This avoids the deprecation warning
+    # for legacy `address` DNS server format.
+    google_server = {"tag": "google", "type": "tls", "server": "8.8.8.8", "detour": "Proxy"}
+    local_server = {"tag": "local", "type": "https", "server": "223.5.5.5", "detour": "direct"}
 
     upsert_dns_server(
         servers,
@@ -441,7 +440,8 @@ def ensure_connectivity_dns_ios(config, outbounds):
         servers = []
         dns["servers"] = servers
 
-    # Keep legacy DNS server format for better VT (1.11.x) compatibility.
+    # iOS sing-box VT (core 1.11.x) uses the legacy DNS server format (`address`)
+    # and will fail to decode the newer `type`/`server` fields.
     upsert_dns_server(
         servers,
         "local",
@@ -754,6 +754,9 @@ def build_config(base_template, outbounds, final_outbound, rules, extra_rule_set
     if str(target).strip().lower() == "ios":
         route_base["rules"] = ensure_connectivity_route_ios(rules)
     else:
+        # sing-box 1.12+ deprecates implicit dial DNS resolver selection and will
+        # require a resolver in 1.14+.
+        route_base.setdefault("default_domain_resolver", "local")
         route_base["rules"] = ensure_connectivity_route(config, rules)
     route_base["rule_set"] = existing_rule_sets
 
