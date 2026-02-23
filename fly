@@ -684,21 +684,24 @@ cmd_build_rules() {
     [[ -n "${base_url}" ]] || die "RULESET_BASE_URL is empty (or pass --base-url) for --ruleset"
 
     mkdir -p "$(dirname "${ROUTE_RULES_FILE_RULESET}")" "${ruleset_dir}"
-    local extra_args=()
+    local -a extra_args=()
     if is_true "${skip_compile}"; then
       extra_args+=(--skip-compile)
     fi
 
-    "${PYTHON_BIN}" "${SCRIPTS_DIR}/build_route_rules.py" \
-      --sources-file "${RULE_SOURCES_FILE}" \
-      --output-file "${ROUTE_RULES_FILE_RULESET}" \
-      --mode ruleset \
-      --ruleset-dir "${ruleset_dir}" \
-      --ruleset-base-url "${base_url}" \
-      --ruleset-download-detour "${RULESET_DOWNLOAD_DETOUR}" \
-      --ruleset-tag-prefix "${RULESET_TAG_PREFIX}" \
-      --sing-box-bin "${SING_BOX_BIN}" \
-      "${extra_args[@]}"
+    local -a cmd=(
+      "${PYTHON_BIN}" "${SCRIPTS_DIR}/build_route_rules.py"
+      --sources-file "${RULE_SOURCES_FILE}"
+      --output-file "${ROUTE_RULES_FILE_RULESET}"
+      --mode ruleset
+      --ruleset-dir "${ruleset_dir}"
+      --ruleset-base-url "${base_url}"
+      --ruleset-download-detour "${RULESET_DOWNLOAD_DETOUR}"
+      --ruleset-tag-prefix "${RULESET_TAG_PREFIX}"
+      --sing-box-bin "${SING_BOX_BIN}"
+    )
+    cmd+=("${extra_args[@]}")
+    "${cmd[@]}"
     log "generated ruleset route rules -> ${ROUTE_RULES_FILE_RULESET}"
     log "generated rule-set files -> ${ruleset_dir}"
     log "ruleset base url -> ${base_url}"
