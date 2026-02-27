@@ -227,11 +227,12 @@ detect_arch() {
 # Clash API helpers
 # ---------------------------------------------------------------------------
 
-# HTTP code from the last fly_api() call (global, set by fly_api)
+# Globals set by fly_api() after each call
 FLY_API_HTTP_CODE=""
+FLY_API_BODY=""
 
 # fly_api METHOD PATH [BODY_JSON]
-# Prints response body to stdout; sets FLY_API_HTTP_CODE global.
+# Sets FLY_API_HTTP_CODE and FLY_API_BODY globals. Never call via $().
 fly_api() {
   local method="$1"
   local path="$2"
@@ -245,7 +246,7 @@ fly_api() {
   tmp="$(mktemp)"
   FLY_API_HTTP_CODE="$(curl "${curl_args[@]}" -w '%{http_code}' -o "${tmp}" \
     "http://${API_HOST}${path}" 2>/dev/null)" || FLY_API_HTTP_CODE="000"
-  cat "${tmp}"
+  FLY_API_BODY="$(cat "${tmp}")"
   rm -f "${tmp}"
 }
 
@@ -1182,9 +1183,9 @@ cmd_select() {
   fly_api_check || die "Clash API 不可达 (API_HOST=${API_HOST})
 提示：请先运行 ./fly on，并确认 config.json 中已启用 experimental.clash_api"
 
-  local body
-  body="$(fly_api GET /proxies)"
+  fly_api GET /proxies
   [[ "${FLY_API_HTTP_CODE}" =~ ^2 ]] || die "GET /proxies 失败 (${FLY_API_HTTP_CODE})"
+  local body="${FLY_API_BODY}"
 
   if [[ -n "${target_group}" ]]; then
     _fly_select_node "${target_group}" "${body}"
@@ -1286,8 +1287,8 @@ for node in all_nodes:
   local idx=$((selected - 1))
   local target_node="${node_names[$idx]}"
 
-  local switch_resp
-  switch_resp="$(fly_api PUT "/proxies/${group_name}" "{\"name\":\"${target_node}\"}")"
+  fly_api PUT "/proxies/${group_name}" "{\"name\":\"${target_node}\"}"
+  local switch_resp="${FLY_API_BODY}"
 
   if [[ "${FLY_API_HTTP_CODE}" == "204" ]]; then
     stdout_line "${COLOR_GREEN}" "[fly] ${group_name} -> ${target_node} ✓"
@@ -1324,9 +1325,9 @@ cmd_delay() {
     return
   fi
 
-  local body
-  body="$(fly_api GET /proxies)"
+  fly_api GET /proxies
   [[ "${FLY_API_HTTP_CODE}" =~ ^2 ]] || die "GET /proxies 失败 (${FLY_API_HTTP_CODE})"
+  local body="${FLY_API_BODY}"
 
   local groups
   groups="$(printf '%s' "${body}" | "${PYTHON_BIN}" -c "
@@ -1348,8 +1349,8 @@ _fly_delay_group() {
   local group="$1"
   log "测试 ${group} 延迟..."
 
-  local body
-  body="$(fly_api GET "/group/${group}/delay?url=https://www.gstatic.com/generate_204&timeout=5000")"
+  fly_api GET "/group/${group}/delay?url=https://www.gstatic.com/generate_204&timeout=5000"
+  local body="${FLY_API_BODY}"
 
   if [[ "${FLY_API_HTTP_CODE}" != "200" ]]; then
     warn "${group}: 测速失败 (${FLY_API_HTTP_CODE})"
@@ -1456,8 +1457,8 @@ except Exception:
     printf '  分组状态\n'
   fi
 
-  local proxies_body
-  proxies_body="$(fly_api GET /proxies 2>/dev/null || printf '{}')"
+  fly_api GET /proxies
+  local proxies_body="${FLY_API_BODY:-{\}}"
   if [[ "${FLY_API_HTTP_CODE}" =~ ^2 ]]; then
     printf '%s' "${proxies_body}" | "${PYTHON_BIN}" -c "
 import json, sys, os
