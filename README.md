@@ -378,17 +378,79 @@ sing-box version
   - `./fly init` 会复制为 `config/route-rules.json` 供你编辑。
   - 默认是空规则，不包含任何预置分流策略。
 
-## 12. Future Work
+## 12. 实时交互命令（sing-box 运行中使用）
+
+以下命令依赖 sing-box 的 Clash API，需要先 `./fly on` 启动 sing-box。
+
+### 前置条件
+
+`config/base-template.json` 中已内置 `experimental.clash_api`（默认监听 `127.0.0.1:9090`）。如需修改端口或启用密钥，同步修改 `config/base-template.json` 和 `config/fly.env` 中的 `API_HOST`/`API_SECRET`。
+
+### 切换节点（不重启）
+
+```bash
+./fly select               # 列出所有 selector 分组，交互式切换
+./fly select HongKong      # 直接进入 HongKong 分组的节点选择
+```
+
+交互风格与 Fish Tide `configure` 类似：按数字键选择，`q` 退出，`b` 返回上一级。
+
+示例：
+
+```
+=== fly select — 选择分组 ===
+
+  (1) Proxy                    [当前: HongKong]
+  (2) HongKong                 [当前: A-HongKong] 12ms
+  (3) America                  [当前: A-US-01]
+  (4) Streaming                [当前: HongKong]
+
+选择分组 [1/2/3/4/q]: 2
+
+=== fly select — HongKong ===
+
+  (1) A-HongKong               ★ 当前  12ms
+  (2) B-HongKong               45ms
+  (b) ← 返回分组列表
+
+选择节点 [1/2/b/q]: 2
+[fly] HongKong -> B-HongKong ✓
+```
+
+切换实时生效，新连接立即走新节点，无需重启。
+
+### 测试延迟
+
+```bash
+./fly delay               # 对所有 selector 分组内节点测速
+./fly delay HongKong      # 只测 HongKong 分组
+```
+
+输出按延迟排序，颜色编码：绿色 < 100ms，黄色 < 300ms，红色 ≥ 300ms 或超时。
+
+### 实时监控面板
+
+```bash
+./fly monitor
+```
+
+进入实时刷新面板（3 秒自动刷新），展示：
+
+- 运行状态 + 实时流量（↑ 上传 / ↓ 下载）
+- 各 selector 分组当前选择 + 历史延迟
+- 底部快捷键：`s` 切换节点，`d` 测延迟，`q` 退出
+
+## 13. Future Work
 
 见 `docs/future-work.md`。
 
-## 13. 测试
+## 14. 测试
 
 ```bash
 bash tests/test_pipeline.sh
 ```
 
-## 14. 署名
+## 15. 署名
 
 - 内置节点提取器代码来自开源项目 `sing-box-subscribe`。
 - 原作者：`Toperlock`（仓库：`https://github.com/Toperlock/sing-box-subscribe`）。

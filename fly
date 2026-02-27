@@ -120,6 +120,9 @@ Usage:
   ./fly off
   ./fly status
   ./fly log [-n lines] [--no-follow]
+  ./fly select [group-name]
+  ./fly delay [group-name]
+  ./fly monitor
   ./fly help
 
 Command summary:
@@ -137,6 +140,9 @@ Command summary:
   off           Stop sing-box using PID file (with pkill fallback)
   status        Show running status from PID file
   log           Tail sing-box log file
+  select        Live switch active node of a selector group (via Clash API, no restart)
+  delay         Test latency of all nodes in a selector group (via Clash API)
+  monitor       Live dashboard: traffic, group status, latency (q=quit, s=select, d=delay)
   help          Show this help
 EOF
 }
@@ -183,6 +189,8 @@ load_env() {
   : "${SINGBOX_VERSION:=1.12.20}"
   : "${SINGBOX_INSTALL_DIR:=/usr/local/bin}"
   : "${SINGBOX_RELEASES_API:=https://api.github.com/repos/SagerNet/sing-box/releases}"
+  : "${API_HOST:=127.0.0.1:9090}"
+  : "${API_SECRET:=}"
 
   EXTRACT_PROVIDERS_FILE="$(abs_path "${EXTRACT_PROVIDERS_FILE}")"
   RULE_SOURCES_FILE="$(abs_path "${RULE_SOURCES_FILE}")"
@@ -213,6 +221,115 @@ detect_arch() {
     aarch64|arm64) printf 'arm64\n' ;;
     *) die "unsupported architecture: $(uname -m)" ;;
   esac
+}
+
+# ---------------------------------------------------------------------------
+# Clash API helpers
+# ---------------------------------------------------------------------------
+
+# HTTP code from the last fly_api() call (global, set by fly_api)
+FLY_API_HTTP_CODE=""
+
+# fly_api METHOD PATH [BODY_JSON]
+# Prints response body to stdout; sets FLY_API_HTTP_CODE global.
+fly_api() {
+  local method="$1"
+  local path="$2"
+  local body="${3:-}"
+
+  local curl_args=(-s --connect-timeout 5 -X "${method}")
+  [[ -n "${API_SECRET:-}" ]] && curl_args+=(-H "Authorization: Bearer ${API_SECRET}")
+  [[ -n "${body}" ]] && curl_args+=(-H "Content-Type: application/json" -d "${body}")
+
+  local tmp
+  tmp="$(mktemp)"
+  FLY_API_HTTP_CODE="$(curl "${curl_args[@]}" -w '%{http_code}' -o "${tmp}" \
+    "http://${API_HOST}${path}" 2>/dev/null)" || FLY_API_HTTP_CODE="000"
+  cat "${tmp}"
+  rm -f "${tmp}"
+}
+
+# Returns 0 if the Clash API is reachable, 1 otherwise.
+fly_api_check() {
+  command -v curl >/dev/null 2>&1 || return 1
+  local code
+  code="$(curl -s -o /dev/null -w '%{http_code}' --connect-timeout 2 \
+    "http://${API_HOST}/version" 2>/dev/null)" || code="000"
+  [[ "${code}" =~ ^2 ]]
+}
+
+# ---------------------------------------------------------------------------
+# TUI helpers (Tide-style: numbered key selection)
+# ---------------------------------------------------------------------------
+
+_FLY_TUI_SYMS=()
+_FLY_TUI_LABELS=()
+_FLY_TUI_RESULT=""
+
+_fly_tui_reset() {
+  _FLY_TUI_SYMS=()
+  _FLY_TUI_LABELS=()
+}
+
+_fly_tui_title() {
+  clear
+  if [[ "${COLOR_STDOUT_ENABLED}" == "1" ]]; then
+    printf '\033[1;36m=== %s ===\033[0m\n\n' "$1"
+  else
+    printf '=== %s ===\n\n' "$1"
+  fi
+}
+
+# _fly_tui_option SYM LABEL [META]
+_fly_tui_option() {
+  local sym="$1" label="$2" meta="${3:-}"
+  _FLY_TUI_SYMS+=("${sym}")
+  _FLY_TUI_LABELS+=("${label}")
+  if [[ "${COLOR_STDOUT_ENABLED}" == "1" ]]; then
+    if [[ -n "${meta}" ]]; then
+      printf '  \033[36m(%s)\033[0m %-28s \033[33m%s\033[0m\n' "${sym}" "${label}" "${meta}"
+    else
+      printf '  \033[36m(%s)\033[0m %s\n' "${sym}" "${label}"
+    fi
+  else
+    if [[ -n "${meta}" ]]; then
+      printf '  (%s) %-28s %s\n' "${sym}" "${label}" "${meta}"
+    else
+      printf '  (%s) %s\n' "${sym}" "${label}"
+    fi
+  fi
+}
+
+# Wait for a key matching one of the registered symbols.
+# Sets _FLY_TUI_RESULT to the selected symbol, or "q" to quit.
+_fly_tui_prompt() {
+  local hint="${1:-选择}"
+  local syms_copy=("${_FLY_TUI_SYMS[@]}")
+  local syms_str
+  # shellcheck disable=SC2124
+  syms_str="$(
+    local IFS='/'
+    echo "${syms_copy[*]}"
+  )"
+  printf '\n%s [%s/q]: ' "${hint}" "${syms_str}"
+  local key
+  while IFS= read -rsn1 key; do
+    if [[ "${key}" == "q" || "${key}" == "Q" ]]; then
+      printf '\n'
+      _FLY_TUI_RESULT="q"
+      _fly_tui_reset
+      return 0
+    fi
+    local sym
+    for sym in "${syms_copy[@]}"; do
+      if [[ "${key}" == "${sym}" ]]; then
+        printf '\n'
+        _FLY_TUI_RESULT="${sym}"
+        _fly_tui_reset
+        return 0
+      fi
+    done
+  done
 }
 
 guess_ruleset_base_url_from_git() {
@@ -1055,6 +1172,369 @@ cmd_log() {
   fi
 }
 
+# ---------------------------------------------------------------------------
+# fly select — Tide-style live outbound switcher
+# ---------------------------------------------------------------------------
+
+cmd_select() {
+  local target_group="${1:-}"
+  fly_api_check || die "Clash API 不可达 (API_HOST=${API_HOST})
+提示：请先运行 ./fly on，并确认 config.json 中已启用 experimental.clash_api"
+
+  local body
+  body="$(fly_api GET /proxies)"
+  [[ "${FLY_API_HTTP_CODE}" =~ ^2 ]] || die "GET /proxies 失败 (${FLY_API_HTTP_CODE})"
+
+  if [[ -n "${target_group}" ]]; then
+    _fly_select_node "${target_group}" "${body}"
+    return
+  fi
+
+  local groups_tsv
+  groups_tsv="$(printf '%s' "${body}" | "${PYTHON_BIN}" -c "
+import json, sys
+data = json.load(sys.stdin)
+proxies = data.get('proxies', {})
+for name, info in proxies.items():
+    if info.get('type') == 'Selector' and name != 'GLOBAL':
+        now = info.get('now', '')
+        history = info.get('history', [])
+        delay = history[-1].get('delay', 0) if history else 0
+        ms = f'{delay}ms' if delay else ''
+        print(f'{name}\t{now}\t{ms}')
+" 2>/dev/null)"
+
+  [[ -n "${groups_tsv}" ]] || die "未找到可切换的 selector 分组"
+
+  _fly_tui_title "fly select — 选择分组"
+
+  local group_names=()
+  local sym=1
+  while IFS=$'\t' read -r name now delay_str; do
+    local meta="[当前: ${now}]"
+    [[ -n "${delay_str}" ]] && meta="${meta} ${delay_str}"
+    _fly_tui_option "${sym}" "${name}" "${meta}"
+    group_names+=("${name}")
+    ((sym++))
+    if ((sym > 9)); then
+      printf '  ...(更多分组未显示，请用 ./fly select <分组名> 直接指定)\n'
+      break
+    fi
+  done <<< "${groups_tsv}"
+
+  _fly_tui_prompt "选择分组"
+  local selected="${_FLY_TUI_RESULT}"
+  [[ "${selected}" == "q" ]] && return 0
+
+  local idx=$((selected - 1))
+  _fly_select_node "${group_names[$idx]}" "${body}"
+}
+
+_fly_select_node() {
+  local group_name="$1"
+  local body="$2"
+
+  local nodes_tsv
+  nodes_tsv="$(printf '%s' "${body}" | "${PYTHON_BIN}" -c "
+import json, sys
+data = json.load(sys.stdin)
+proxies = data.get('proxies', {})
+group = proxies.get(sys.argv[1], {})
+now = group.get('now', '')
+all_nodes = group.get('all', [])
+for node in all_nodes:
+    info = proxies.get(node, {})
+    history = info.get('history', [])
+    delay = history[-1].get('delay', 0) if history else 0
+    ms = f'{delay}ms' if delay else '-'
+    current = '★ 当前' if node == now else ''
+    print(f'{node}\t{current}\t{ms}')
+" "${group_name}" 2>/dev/null)"
+
+  if [[ -z "${nodes_tsv}" ]]; then
+    warn "分组 '${group_name}' 不存在或节点列表为空"
+    return 1
+  fi
+
+  _fly_tui_title "fly select — ${group_name}"
+
+  local node_names=()
+  local sym=1
+  while IFS=$'\t' read -r node_name current delay_str; do
+    local meta=""
+    [[ -n "${current}" ]] && meta="${current}"
+    [[ -n "${delay_str}" && "${delay_str}" != "-" ]] && meta="${meta:+${meta}  }${delay_str}"
+    _fly_tui_option "${sym}" "${node_name}" "${meta}"
+    node_names+=("${node_name}")
+    ((sym++))
+    if ((sym > 9)); then
+      printf '  ...(更多节点未显示)\n'
+      break
+    fi
+  done <<< "${nodes_tsv}"
+  _fly_tui_option "b" "← 返回分组列表" ""
+
+  _fly_tui_prompt "选择节点"
+  local selected="${_FLY_TUI_RESULT}"
+  [[ "${selected}" == "q" ]] && return 0
+  if [[ "${selected}" == "b" ]]; then
+    cmd_select
+    return
+  fi
+
+  local idx=$((selected - 1))
+  local target_node="${node_names[$idx]}"
+
+  local switch_resp
+  switch_resp="$(fly_api PUT "/proxies/${group_name}" "{\"name\":\"${target_node}\"}")"
+
+  if [[ "${FLY_API_HTTP_CODE}" == "204" ]]; then
+    stdout_line "${COLOR_GREEN}" "[fly] ${group_name} -> ${target_node} ✓"
+  else
+    local err_msg
+    err_msg="$(printf '%s' "${switch_resp}" | "${PYTHON_BIN}" -c \
+      "import json,sys; print(json.load(sys.stdin).get('message',''))" 2>/dev/null || true)"
+    warn "切换失败 (${FLY_API_HTTP_CODE})${err_msg:+: ${err_msg}}"
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# fly delay — latency test via Clash API
+# ---------------------------------------------------------------------------
+
+_fly_format_bytes() {
+  local -i b="${1:-0}"
+  if ((b >= 1048576)); then
+    printf '%d.%dMB' $((b / 1048576)) $(( (b % 1048576) * 10 / 1048576 ))
+  elif ((b >= 1024)); then
+    printf '%d.%dKB' $((b / 1024)) $(( (b % 1024) * 10 / 1024 ))
+  else
+    printf '%dB' "${b}"
+  fi
+}
+
+cmd_delay() {
+  local target_group="${1:-}"
+  fly_api_check || die "Clash API 不可达 (API_HOST=${API_HOST})"
+
+  if [[ -n "${target_group}" ]]; then
+    _fly_delay_group "${target_group}"
+    return
+  fi
+
+  local body
+  body="$(fly_api GET /proxies)"
+  [[ "${FLY_API_HTTP_CODE}" =~ ^2 ]] || die "GET /proxies 失败 (${FLY_API_HTTP_CODE})"
+
+  local groups
+  groups="$(printf '%s' "${body}" | "${PYTHON_BIN}" -c "
+import json, sys
+data = json.load(sys.stdin)
+for name, info in data.get('proxies', {}).items():
+    if info.get('type') == 'Selector' and name != 'GLOBAL':
+        print(name)
+" 2>/dev/null)"
+
+  [[ -n "${groups}" ]] || die "未找到 selector 分组"
+
+  while IFS= read -r group; do
+    _fly_delay_group "${group}"
+  done <<< "${groups}"
+}
+
+_fly_delay_group() {
+  local group="$1"
+  log "测试 ${group} 延迟..."
+
+  local body
+  body="$(fly_api GET "/group/${group}/delay?url=https://www.gstatic.com/generate_204&timeout=5000")"
+
+  if [[ "${FLY_API_HTTP_CODE}" != "200" ]]; then
+    warn "${group}: 测速失败 (${FLY_API_HTTP_CODE})"
+    return
+  fi
+
+  stdout_line "${COLOR_CYAN}" "${group}:"
+  printf '%s' "${body}" | "${PYTHON_BIN}" -c "
+import json, sys, os
+use_color = os.isatty(sys.stdout.fileno())
+data = json.load(sys.stdin)
+items = sorted(data.items(), key=lambda x: x[1] if isinstance(x[1], (int, float)) else 99999)
+for name, delay in items:
+    if isinstance(delay, (int, float)):
+        d = int(delay)
+        if use_color:
+            c = '\033[32m' if d < 100 else ('\033[33m' if d < 300 else '\033[31m')
+            print(f'  {c}{name:<30}{d:>6}ms\033[0m')
+        else:
+            print(f'  {name:<30}{d:>6}ms')
+    else:
+        if use_color:
+            print(f'  \033[31m{name:<30}timeout\033[0m')
+        else:
+            print(f'  {name:<30}timeout')
+" 2>/dev/null
+  printf '\n'
+}
+
+# ---------------------------------------------------------------------------
+# fly monitor — live dashboard
+# ---------------------------------------------------------------------------
+
+_fly_pid_is_alive() {
+  [[ -f "${PID_FILE}" ]] || return 1
+  local pid
+  pid="$(cat "${PID_FILE}" 2>/dev/null)" || return 1
+  kill -0 "${pid}" 2>/dev/null
+}
+
+_fly_monitor_render() {
+  local cols
+  cols="$(tput cols 2>/dev/null || printf '80')"
+
+  printf '\033[H'
+
+  # Header bar
+  local status_label
+  if _fly_pid_is_alive; then
+    status_label="running"
+  else
+    status_label="stopped"
+  fi
+  local now_str
+  now_str="$(date '+%H:%M:%S')"
+  local left="  fly monitor"
+  local right="${status_label}  ${now_str}  "
+  local pad=$(( cols - ${#left} - ${#right} ))
+  if ((pad < 0)); then pad=0; fi
+
+  if [[ "${COLOR_STDOUT_ENABLED}" == "1" ]]; then
+    printf '\033[7;36m%s%*s%s\033[0m\n' "${left}" "${pad}" "" "${right}"
+  else
+    printf '%s%*s%s\n' "${left}" "${pad}" "" "${right}"
+  fi
+
+  # Traffic (one-shot HTTP read from /traffic stream)
+  local up_bytes=0 down_bytes=0
+  if command -v curl >/dev/null 2>&1; then
+    local traffic_line
+    traffic_line="$(curl -s --connect-timeout 1 --max-time 1 \
+      ${API_SECRET:+-H "Authorization: Bearer ${API_SECRET}"} \
+      "http://${API_HOST}/traffic" 2>/dev/null | head -1)" || true
+    if [[ -n "${traffic_line}" ]]; then
+      eval "$(printf '%s' "${traffic_line}" | "${PYTHON_BIN}" -c "
+import json, sys
+try:
+    d = json.loads(sys.stdin.read().strip())
+    print('up_bytes=%d' % d.get('up',0))
+    print('down_bytes=%d' % d.get('down',0))
+except Exception:
+    print('up_bytes=0')
+    print('down_bytes=0')
+" 2>/dev/null || printf 'up_bytes=0\ndown_bytes=0')"
+    fi
+  fi
+
+  local up_str down_str
+  up_str="$(_fly_format_bytes "${up_bytes}")/s"
+  down_str="$(_fly_format_bytes "${down_bytes}")/s"
+
+  printf '\n'
+  if [[ "${COLOR_STDOUT_ENABLED}" == "1" ]]; then
+    printf '  \033[36m流量\033[0m  ↑ \033[32m%-14s\033[0m  ↓ \033[31m%s\033[0m\n' "${up_str}" "${down_str}"
+  else
+    printf '  流量  ↑ %-14s  ↓ %s\n' "${up_str}" "${down_str}"
+  fi
+
+  # Selector groups
+  printf '\n'
+  if [[ "${COLOR_STDOUT_ENABLED}" == "1" ]]; then
+    printf '  \033[1m分组状态\033[0m\n'
+  else
+    printf '  分组状态\n'
+  fi
+
+  local proxies_body
+  proxies_body="$(fly_api GET /proxies 2>/dev/null || printf '{}')"
+  if [[ "${FLY_API_HTTP_CODE}" =~ ^2 ]]; then
+    printf '%s' "${proxies_body}" | "${PYTHON_BIN}" -c "
+import json, sys, os
+use_color = os.isatty(sys.stdout.fileno())
+data = json.load(sys.stdin)
+proxies = data.get('proxies', {})
+for name, info in proxies.items():
+    if info.get('type') != 'Selector' or name == 'GLOBAL':
+        continue
+    now = info.get('now', '-')
+    history = info.get('history', [])
+    delay = history[-1].get('delay', 0) if history else 0
+    ms = f'{delay}ms' if delay else '-'
+    if use_color:
+        print(f'  {name:<20} → \033[32m{now:<24}\033[0m [{ms}]')
+    else:
+        print(f'  {name:<20} → {now:<24} [{ms}]')
+" 2>/dev/null
+  fi
+
+  # Footer
+  printf '\n'
+  if [[ "${COLOR_STDOUT_ENABLED}" == "1" ]]; then
+    printf '  \033[7m  \033[36m[s]\033[0m\033[7m 切换节点   \033[36m[d]\033[0m\033[7m 测延迟   \033[36m[q]\033[0m\033[7m 退出   (3 秒自动刷新)  \033[0m\n'
+  else
+    printf '  [s] 切换节点   [d] 测延迟   [q] 退出   (3 秒自动刷新)\n'
+  fi
+}
+
+cmd_monitor() {
+  fly_api_check || die "Clash API 不可达 (API_HOST=${API_HOST})"
+  command -v tput >/dev/null 2>&1 || die "tput is required for fly monitor"
+
+  tput smcup 2>/dev/null || true
+  tput civis 2>/dev/null || true
+  trap 'tput rmcup 2>/dev/null || true; tput cnorm 2>/dev/null || true; return 0' INT TERM
+
+  # Force color in alternate screen (it's always a terminal)
+  local prev_color="${COLOR_STDOUT_ENABLED}"
+  [[ -t 1 ]] && COLOR_STDOUT_ENABLED="1"
+
+  printf '\033[2J'
+
+  local key
+  while true; do
+    _fly_monitor_render
+    if IFS= read -rsn1 -t 3 key 2>/dev/null; then
+      case "${key}" in
+        q|Q)
+          break
+          ;;
+        s|S)
+          tput cnorm 2>/dev/null || true
+          tput rmcup 2>/dev/null || true
+          cmd_select
+          tput smcup 2>/dev/null || true
+          printf '\033[2J'
+          tput civis 2>/dev/null || true
+          ;;
+        d|D)
+          tput cnorm 2>/dev/null || true
+          tput rmcup 2>/dev/null || true
+          cmd_delay
+          printf '\n按任意键返回...'
+          IFS= read -rsn1 -t 30 _dummy 2>/dev/null || true
+          tput smcup 2>/dev/null || true
+          printf '\033[2J'
+          tput civis 2>/dev/null || true
+          ;;
+      esac
+    fi
+  done
+
+  trap - INT TERM
+  COLOR_STDOUT_ENABLED="${prev_color}"
+  tput rmcup 2>/dev/null || true
+  tput cnorm 2>/dev/null || true
+}
+
 main() {
   local cmd="${1:-help}"
   shift || true
@@ -1074,6 +1554,9 @@ main() {
     off) cmd_off "$@" ;;
     status) cmd_status "$@" ;;
     log) cmd_log "$@" ;;
+    select) cmd_select "$@" ;;
+    delay) cmd_delay "$@" ;;
+    monitor) cmd_monitor "$@" ;;
     help|-h|--help) usage ;;
     version|-v|--version)
       printf '%s\n' "${FLY_VERSION}"

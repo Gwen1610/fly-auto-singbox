@@ -477,6 +477,13 @@ cn_direct_rules = [
 ]
 if len(cn_direct_rules) != 1:
     raise SystemExit(f"ASSERT FAIL: expected exactly one CN direct route rule, got {len(cn_direct_rules)}")
+
+# clash_api must be present in desktop config (for fly select/delay/monitor)
+exp = cfg.get("experimental", {})
+if "clash_api" not in exp:
+    raise SystemExit("ASSERT FAIL: expected experimental.clash_api in desktop config.json")
+if "external_controller" not in exp.get("clash_api", {}):
+    raise SystemExit("ASSERT FAIL: expected experimental.clash_api.external_controller in desktop config.json")
 PY
 
 # Simulate a user-modified iOS template that accidentally contains new DNS schema fields.
@@ -564,6 +571,11 @@ cn_direct_rules = [
 ]
 if len(cn_direct_rules) != 1:
     raise SystemExit(f"ASSERT FAIL: expected exactly one iOS CN direct route rule, got {len(cn_direct_rules)}")
+
+# iOS config must NOT contain clash_api (not needed on device, VT 1.11.4 doesn't use it)
+ios_exp = cfg.get("experimental", {})
+if "clash_api" in ios_exp:
+    raise SystemExit("ASSERT FAIL: iOS config should not contain experimental.clash_api")
 PY
 
 mkdir -p "./ruleset"
