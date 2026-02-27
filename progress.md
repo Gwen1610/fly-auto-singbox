@@ -94,6 +94,14 @@
 - [x] 验证通过：`bash tests/test_pipeline.sh`、`sing-box check -c config.json`。
 - [x] 提交并 push 到 `origin/main`。
 
+## Session 2026-02-27 (交互 TUI 规划)
+- [x] 调研 sing-box Clash API 全部端点与认证方式（`findings.md` 已记录）
+- [x] 调研 Tide configure 交互逻辑（纯 `read --nchars 1` + 数字键选择）
+- [x] 调研 Bash TUI 技术方案（纯 Bash `read -t`、fzf、gum、Python textual 横向对比）
+- [x] 更新 `findings.md`：新增 sing-box API + TUI 调研结论
+- [x] 更新 `task_plan.md`：新增 Phase 19-22（API 基础设施、select、delay、monitor）
+- [ ] 等待用户确认方向后开始实现
+
 ## Session 2026-02-23 (bulianglin 配置借鉴分析，文档先行)
 - [x] 阅读用户提供的 `example/config.json` 与 `example/tun.json`，提取 DNS 防泄露相关逻辑。
 - [x] 尝试读取原教程页面，确认被 Cloudflare 验证拦截（无法自动抓正文）。

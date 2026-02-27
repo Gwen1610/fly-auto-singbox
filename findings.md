@@ -146,6 +146,82 @@
 - 分组体验：`HongKong/Singapore/Japan` 的来源+地区子组默认使用 `urltest` 自动选最快；`America` 保持 `selector` 手动选择。
 - 补充：新增 `docs/future-work.md` 记录后续可选优化（开关化 QUIC、PSL、IPv6 策略、urltest 参数等）。
 
+## 2026-02-27 (sing-box Clash API + TUI 方案调研)
+
+### sing-box Clash API 核心能力
+
+sing-box 通过 `experimental.clash_api` 提供 Clash 兼容的 RESTful HTTP API，核心能力如下：
+
+**启用配置：**
+```json
+{
+  "experimental": {
+    "clash_api": {
+      "external_controller": "127.0.0.1:9090",
+      "secret": "your-secret"
+    }
+  }
+}
+```
+
+**关键 API 端点：**
+
+| 操作 | 端点 | 方法 |
+|---|---|---|
+| 列出所有出站 | `GET /proxies` | GET |
+| 动态切换 selector 出站 | `PUT /proxies/{name}` body: `{"name":"target-tag"}` | PUT |
+| 单出站延迟测试 | `GET /proxies/{name}/delay?url=...&timeout=5000` | GET |
+| 组内全部出站测速 | `GET /group/{name}/delay?url=...&timeout=5000` | GET |
+| 实时流量统计（支持 WS） | `GET /traffic` | GET/WS |
+| 实时日志流（支持 WS） | `GET /logs` | GET/WS |
+| 连接管理 | `GET/DELETE /connections` | GET/DELETE |
+| 模式切换 | `PATCH /configs` body: `{"mode":"Rule"}` | PATCH |
+
+**动态切换出站（不重启）：**
+```bash
+curl -s -X PUT "http://127.0.0.1:9090/proxies/HongKong" \
+  -H "Authorization: Bearer secret" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "A-HongKong"}'
+# 返回 204 No Content = 成功
+```
+
+**延迟测试注意：** `http://` URL 有 bug，建议使用 `https://www.gstatic.com/generate_204`；`timeout` 单位毫秒，最大 32767ms。
+
+**`GET /proxies` 中 selector 类型示例：**
+```json
+{
+  "HongKong": {
+    "type": "Selector",
+    "now": "A-HongKong",
+    "all": ["A-HongKong", "B-HongKong"],
+    "history": [{"time": "...", "delay": 45}]
+  }
+}
+```
+
+### TUI 方案技术调研结论
+
+**Tide `configure` 核心机制：**
+- 纯 Fish Shell，零依赖
+- `read --nchars 1` 捕获单字符（数字键，不是箭头键）
+- 选项格式：`(1) Option A`，按数字选择
+
+**Bash 移植（最小依赖）：**
+- `IFS= read -rsn1 key` 捕获单字符
+- `tput smcup/rmcup` 备用屏幕缓冲区
+- `printf '\033[H'` 回顶刷新（不 clear，避免闪烁）
+- `IFS= read -rsn1 -t N key` 定时自动刷新
+
+**方案选型：**
+| 场景 | 选择 | 理由 |
+|---|---|---|
+| 节点切换向导 | 纯 Bash `read -rsn1` + ANSI | 零依赖，fly 已有 ANSI 基础设施 |
+| 实时监控面板 | Bash `read -t` + curl 调 Clash API | 无额外依赖 |
+| （可选增强）节点模糊搜索 | `fzf` 可选 | 单文件二进制 |
+
+---
+
 ## 2026-02-23 (bulianglin DNS anti-leak logic review, no code changes)
 - 原教程页面 `https://bulianglin.com/archives/singbox.html` 自动抓取时被 Cloudflare 验证拦截，无法直接读取正文；本轮分析基于用户提供的 `example/config.json` 和 `example/tun.json`。
 - 对方配置的核心思路是“DNS 单独建模”：多 resolver 分角色（本地 / system / block / 远程 DoH），再用 `dns.rules` 决定解析路径。

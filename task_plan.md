@@ -1,14 +1,17 @@
-# Task Plan: 解耦 Pipeline + 自动安装 + 内置提取器
+# Task Plan: 解耦 Pipeline + 自动安装 + 内置提取器 + 交互 TUI
 
-## Goal
-在 `fly-auto-singbox` 中实现三段解耦，并新增自动安装能力与内置订阅提取能力：
-1) 手动安装指导（保留原下载方式，但不自动安装）；
-2) 节点提取（不含分流）+ 分流构建（独立模块）；
-3) `fly on/off/status/log` 后台进程管理。
-4) `fly install-singbox` 自动下载并安装 Linux/mac 对应版本（当前会话仅 dry-run 验证，不实际下载）。
+## Goal（当前）
+为 `fly-auto-singbox` 增加终端交互 TUI 能力，实现：
+1. `fly select` — 运行时动态切换出站节点（无需重启，通过 Clash API）；
+2. `fly delay` — 节点延迟测试（调用 Clash API 批量或单组测速）；
+3. `fly monitor` — 实时监控面板（流量统计、当前选择、延迟历史，Bash TUI）；
+4. 基础能力：在 `config/base-template.json` 中注入 `experimental.clash_api` 配置。
 
 ## Current Phase
-Complete (Phase 17)
+Phase 19（计划阶段）
+
+## Previous Goal（已完成，Phase 1-17）
+三段解耦 Pipeline + 自动安装 + 内置订阅提取器 + 分层分组 + 连通性默认注入
 
 ## Phases
 
@@ -135,6 +138,174 @@ Complete (Phase 17)
 - [x] 更新测试断言
 - [x] 完成验证并推送到 GitHub
 - **Status:** complete
+
+---
+
+## Phase 19: Clash API 基础设施（API Foundation）
+
+**目标：** 在 `config/base-template.json` 中注入 `experimental.clash_api`，并在 `fly` 脚本中封装 API 调用能力，为后续所有交互命令提供底座。
+
+### 设计决策
+
+- **仅桌面端启用 API**：`config/base-template.json` 注入 `clash_api`；iOS 模板不改（VT 1.11.4 iOS 不需要运行时 API 交互）。
+- **可配置地址与密钥**：`fly.env` 新增 `API_HOST`（默认 `127.0.0.1:9090`）和 `API_SECRET`（默认空）。
+- **模板注入方式**：`experimental.clash_api` 作为固定字段写入 `config/base-template.json`；`build_config.py` 可选替换地址/密钥（从 `fly.env` 读取后通过环境变量传入）。
+- **`fly api` 内部函数**：封装 `curl` 调用，处理认证头、错误码、JSON 输出，供 `select/delay/monitor` 共用。
+
+### 任务列表
+
+- [ ] 在 `config/base-template.json` 中新增 `experimental.clash_api`（`external_controller: "127.0.0.1:9090"`, `secret: ""`）
+- [ ] 在 `config_template/fly.env.example` 新增 `API_HOST` 和 `API_SECRET`
+- [ ] 在 `fly` 脚本中实现 `fly_api()` 函数（curl wrapper，支持 GET/PUT/PATCH/DELETE，返回 HTTP 状态码 + JSON body）
+- [ ] 实现 `fly_api_check()` 函数：检查 API 是否可达（fly 未启动时给出友好提示）
+- [ ] 更新 `tests/test_pipeline.sh`：验证生成的 `config.json` 包含 `experimental.clash_api.external_controller`
+- [ ] 更新 `README.md`：新增 API 配置说明段落
+- **Status:** pending
+
+---
+
+## Phase 20: `fly select` — 实时节点切换（Tide 风格向导）
+
+**目标：** 实现 `fly select [group]` 命令：无需重启 sing-box，通过 Clash API 动态切换 selector 出站的当前选择。交互风格参照 Tide `configure`：数字键快选 + 清屏重绘。
+
+### 交互流程设计
+
+```
+$ ./fly select
+
+=== fly select ===
+
+可切换的分组：
+(1) Proxy          [当前: HongKong]
+(2) HongKong       [当前: A-HongKong]
+(3) Streaming      [当前: HongKong]
+(4) AI             [当前: HongKong]
+(q) 退出
+
+选择分组 [1-4/q]: 2
+
+=== HongKong 节点列表 ===
+(1) A-HongKong     ★ 当前  12ms
+(2) B-HongKong           45ms
+(b) 返回
+(q) 退出
+
+选择节点 [1-2/b/q]: 2
+
+[fly] HongKong -> B-HongKong ✓
+```
+
+### 技术方案
+
+- 第一步：`GET /proxies` 过滤出 `type=Selector` 的出站，排除 `GLOBAL`
+- 显示分组列表 + 当前选择 + 历史延迟（来自 `history[-1].delay`）
+- 用户选分组后，列出该 selector 的 `all` 列表
+- 用户选节点后，`PUT /proxies/{group}` 切换
+- 纯 Bash 实现：`read -rsn1` + `printf` + ANSI 着色
+- 支持直传参数：`./fly select HongKong` 跳过分组选择步骤
+
+### 任务列表
+
+- [ ] 实现 `cmd_select()` 函数（依赖 Phase 19 的 `fly_api()`）
+- [ ] 实现 `_fly_tui_title()`、`_fly_tui_option()`、`_fly_tui_menu()` 等 Tide 风格 TUI 组件（可复用）
+- [ ] 处理边界情况：未运行/API 不可达、group 不存在、节点不在 selector 的 `all` 列表中
+- [ ] 支持 `./fly select [group-name]` 直接指定分组跳过第一步
+- [ ] 测试：mock API（`--api-host` 参数指向测试服务器）验证切换流程
+- **Status:** pending
+
+---
+
+## Phase 21: `fly delay` — 节点延迟测试
+
+**目标：** 实现 `fly delay [group]` 命令，调用 Clash API 对指定分组（或全部分组）的节点批量测速，并以颜色编码显示结果。
+
+### 交互设计
+
+```
+$ ./fly delay HongKong
+
+测试 HongKong 节点延迟...
+
+  A-HongKong     ████  12ms   [绿色]
+  B-HongKong     ████  45ms   [绿色]
+
+$ ./fly delay
+
+测试所有 selector 分组...
+
+  Proxy          跳过（非直连节点）
+  HongKong
+    A-HongKong   12ms
+    B-HongKong   45ms
+  America
+    A-US-01      180ms
+    A-US-02      timeout
+```
+
+### 技术方案
+
+- 单组：`GET /group/{name}/delay?url=https://www.gstatic.com/generate_204&timeout=5000`
+- 响应 map `{tag: ms}`，按延迟排序后显示
+- 颜色：< 100ms 绿，100-300ms 黄，> 300ms 红，timeout 红+斜体
+- 无参数时遍历所有 `type=Selector` 分组
+- 测速进行中显示 spinner（复用 `_fly_spin()` 函数）
+
+### 任务列表
+
+- [ ] 实现 `cmd_delay()` 函数
+- [ ] 实现 `_fly_spin()` spinner 组件（异步后台 + kill）
+- [ ] 延迟结果颜色渲染函数 `_fly_render_delay()`
+- [ ] 无参数时批量遍历所有 selector 分组
+- [ ] 更新 README
+- **Status:** pending
+
+---
+
+## Phase 22: `fly monitor` — 实时监控面板
+
+**目标：** 实现 `fly monitor` 命令，用 Bash TUI 呈现一个可实时刷新的面板，展示：sing-box 运行状态、实时流量、各 selector 分组当前选择与延迟、最近日志行。
+
+### 面板布局设计
+
+```
+╔══════════════════════════════════════════════╗
+║  fly monitor         [running]  2026-02-27   ║
+╠══════════════════════════════════════════════╣
+║  流量  ↑ 1.2MB/s  ↓ 3.4MB/s                 ║
+╠══════════════════════════════════════════════╣
+║  分组状态                                    ║
+║  Proxy        → HongKong                     ║
+║  HongKong     → A-HongKong   [12ms]          ║
+║  Streaming    → HongKong                     ║
+╠══════════════════════════════════════════════╣
+║  [s] 切换节点  [d] 测延迟  [q] 退出          ║
+╚══════════════════════════════════════════════╝
+```
+
+### 技术方案
+
+- `tput smcup` 进入备用缓冲区，`trap ... rmcup` 退出时恢复
+- 主循环：`read -rsn1 -t 3 key`（3 秒超时 = 自动刷新周期）
+- 数据来源：
+  - 运行状态：检查 PID 文件
+  - 流量：`GET /traffic`（单次 HTTP，读一条 JSON 行）
+  - 分组状态：`GET /proxies`（过滤 Selector，取 `now` + `history[-1].delay`）
+- 按 `s` 呼出 `cmd_select()` 的分组选择子流程
+- 按 `d` 呼出 `cmd_delay()` 的测速子流程
+- `printf '\033[H'` 回顶重绘（非 `clear`，避免闪烁）
+- JSON 解析：`python3 -c` 或纯 `grep/sed`（倾向 python3 已存在）
+
+### 任务列表
+
+- [ ] 实现 `cmd_monitor()` 函数
+- [ ] 实现 `_fly_monitor_render()` 面板绘制（可测试）
+- [ ] `GET /traffic` 的数据拉取与格式化（Bytes -> KB/MB/s）
+- [ ] 集成 `select` 和 `delay` 的子流程调用（在 monitor 内嵌套使用 tui 组件）
+- [ ] 终端尺寸适配（`tput cols/lines` 动态布局）
+- [ ] 更新 README
+- **Status:** pending
+
+---
 
 ## Errors Encountered
 | Error | Attempt | Resolution |

@@ -9,8 +9,11 @@
 ## 2. 当前状态（接手前先看）
 
 - 当前分支：`main`
-- 当前基线提交：`1342e80`（`feat: extend Bulianglin CN DNS and route linkage`）
+- 当前基线提交：`6ebf589`（`fix: fly_api subshell bug — FLY_API_HTTP_CODE lost when called via $()`）
 - 最近核心演进：
+  - `a029533`：新增交互命令 `fly select / fly delay / fly monitor`
+  - `2f4c39f`：修复交互命令未加载 `fly.env` 的变量错误
+  - `6ebf589`：修复 `fly_api` 子 shell 场景下状态码丢失
   - `8de7388`：默认生成 VT `1.11.4` 可用配置
   - `5c0e3da`：切到 Bulianglin 风格 DNS 模式
   - `1342e80`：补充 CN DNS / route 联动
@@ -25,7 +28,7 @@
 
 ### 3.1 CLI 入口
 
-- `fly`：主入口（命令编排、环境变量加载、启动/停止、ruleset 发布、构建流程）
+- `fly`：主入口（命令编排、环境变量加载、启动/停止、ruleset 发布、交互命令）
 
 ### 3.2 核心脚本
 
@@ -94,6 +97,10 @@
 5. 如涉及 ruleset 流程，再补：
    - `./fly build-rules --ruleset`
    - `./fly build-config --ruleset`
+6. 运行态交互能力可单独验证：
+   - `./fly select`
+   - `./fly delay`
+   - `./fly monitor`
 
 ---
 
@@ -113,3 +120,61 @@
 - 保持“能运行优先”：先保证 `./fly build-config` 产物可直接导入并启动，再考虑结构优化。  
 - 对 DNS / route 修改时，桌面与 iOS 逻辑必须同时审阅，避免一端修复另一端回归。  
 - 若要迁移到 sing-box `1.12+` / `1.13+` 新格式，建议做“版本开关”而不是直接替换当前 VT `1.11.4` 分支。  
+
+---
+
+## 8. 外部资料导航（Claude Code 查资料入口）
+
+> 原则：**官方文档优先，社区文章用于思路借鉴**。  
+> 如果两者冲突，以官方文档 + 当前目标核心版本（本项目默认 VT `1.11.4`）为准。
+
+### 8.1 官方文档（优先级最高）
+
+- 文档首页（总入口）：  
+  `https://sing-box.sagernet.org/`
+- Migration（版本迁移总入口，先看这个）：  
+  `https://sing-box.sagernet.org/migration/`
+- 你当前最相关的迁移章节：
+  - Legacy special outbounds 迁移（1.11）：  
+    `https://sing-box.sagernet.org/migration/#migrate-legacy-special-outbounds-to-rule-actions`
+  - Geosite -> rule-sets 迁移（1.8，后续版本持续相关）：  
+    `https://sing-box.sagernet.org/migration/#migrate-geosite-to-rule-sets`
+  - 新 DNS server 格式（1.12）：  
+    `https://sing-box.sagernet.org/migration/#migrate-to-new-dns-server-formats`
+  - outbound DNS rule item -> domain_resolver（1.12）：  
+    `https://sing-box.sagernet.org/migration/#migrate-outbound-dns-rule-items-to-domain-resolver`
+- 配置参考（按模块查）：
+  - Route Rule Actions：`https://sing-box.sagernet.org/configuration/route/rule_action/`
+  - DNS：`https://sing-box.sagernet.org/configuration/dns/`
+  - DNS Server（新格式）：`https://sing-box.sagernet.org/configuration/dns/server/`
+  - Legacy DNS Server（旧格式兼容说明）：`https://sing-box.sagernet.org/configuration/dns/server/legacy/`
+  - Rule Set：`https://sing-box.sagernet.org/configuration/rule-set/`
+  - TUN Inbound：`https://sing-box.sagernet.org/configuration/inbound/tun/`
+- Deprecated 清单（看未来会被移除什么）：  
+  `https://sing-box.sagernet.org/deprecated/`
+- Apple 客户端文档入口（iOS/macOS）：  
+  `https://sing-box.sagernet.org/clients/apple/`
+
+### 8.2 社区资料（用于借鉴逻辑，不直接照搬）
+
+- Bulianglin 教程（你提供）：  
+  `https://bulianglin.com/archives/singbox.html`  
+  备注：该站常有 Cloudflare 校验；自动抓取失败时，优先看本仓库本地样例与分析文档。
+- Rewired 配置文章（你提供，作者已标注 1.12 思路）：  
+  `https://blog.rewired.moe/post/sing-box-config/`
+- 对应本仓库内的借鉴分析：  
+  `docs/bulianglin-dns-leak-borrowing-notes.md`
+
+### 8.3 对 Claude Code 的检索顺序（建议）
+
+1. 先读本仓库文档：`README.md` + `docs/claude-code-handoff.md` + `docs/bulianglin-dns-leak-borrowing-notes.md`。  
+2. 再查官方 `migration` 对应版本差异，确认字段是否适配 VT `1.11.4`。  
+3. 最后查社区文章，仅提炼“设计逻辑”（DNS 分层、rule_set 组织、模式切换），不要直接整段复制配置。  
+4. 每次改动后都回到本项目命令验证：`bash tests/test_pipeline.sh`、`./fly build-config`、`./fly build-config --target ios`。  
+
+### 8.4 用户历史提供的本地参考（可能不在 Git）
+
+- `example/m78.config`：用户订阅参考配置（可能包含敏感订阅信息，禁止提交到远端）。  
+- `example/correct.json`：已验证可运行的基准配置（用于对拍生成结果）。  
+- `example/config.json` / `example/tun.json`：来自 Bulianglin 文章的本地拷贝，用于逻辑借鉴。  
+- 如果以上文件在当前工作区不存在，说明未同步到此环境；此时按 `8.1` 官方文档 + `8.2` 社区公开文章继续推进。  
