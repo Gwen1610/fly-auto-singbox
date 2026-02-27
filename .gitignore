@@ -18,3 +18,4 @@ __pycache__/
 ruleset/*.json
 example/*.config
 example/correct.json
+.worktrees/
