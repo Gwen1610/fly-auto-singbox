@@ -227,3 +227,43 @@ curl -s -X PUT "http://127.0.0.1:9090/proxies/HongKong" \
 - 对方配置的核心思路是“DNS 单独建模”：多 resolver 分角色（本地 / system / block / 远程 DoH），再用 `dns.rules` 决定解析路径。
 - 当前项目（VT 1.11.4 兼容版）已经具备关键防泄露基础：`strict_route`、`hijack-dns`、DNS 专用直连出口 `dns_direct`、本地/远程 DNS 分工与模式规则。
 - 可借鉴的主要增强方向：把 `dns.final=remote` + `CN rule_set -> local` 做成“隐私优先”可选模式；`system-dns` 与 `query_type=HTTPS` 拦截可作为后续可选项。
+
+## 2026-02-27（交互式构建 + 终端兼容档位）
+- 本机终端 sing-box 版本为 `1.12.21`（`sing-box version` 实测）。
+- 官方 Migration（1.12）明确提示三类迁移：
+  - `legacy DNS servers` -> 新 `dns.servers` 格式（`type/server/...`）
+  - `outbound DNS rule item` -> `domain_resolver`
+  - 缺少 `route.default_domain_resolver` 或 dial fields `domain_resolver` 会告警
+- 结论：需保留双档配置：
+  - `vt` 档（兼容 VT 1.11.4，legacy DNS）
+  - `terminal` 档（1.12+，新 DNS server + resolver 迁移，避免终端告警）
+- 交互路径设计定稿：
+  1) 第一层：`iOS` / `电脑端`
+  2) 第二层：`有 Rule Set` / `无 Rule Set`
+  3) 第三层（仅电脑端）：`VT 1.11.4` / `终端 1.12+`
+
+## 2026-02-27（fly on 交互启动 + terminal fatal 修复）
+- 用户反馈终端启动 fatal：`start dns/udp[default-dns]: detour to an empty direct outbound makes no sense`。
+- 根因：terminal profile 的 `default-dns`（新 DNS server 格式）仍携带 direct 类型 detour（`dns_direct`），在 1.12+ 下被判定为无意义并直接 fatal。
+- 修复策略：
+  - terminal profile 的 `default-dns/system-dns/google` 去掉 direct-type detour；
+  - 保留 `domain_resolver` + 其它分流/连通性逻辑；
+  - 继续避免 deprecated 的 `dns.rules[].outbound=any`。
+- 为避免 terminal 档出现与 VT 不一致的 DNS 行为，`clash_mode=direct` 已改回 `default-dns`（不走 `system-dns`）。
+- 新增统一交互入口 `./fly interactive`（别名 `./fly menu`），可在同一界面选择提取节点/生成规则/构建配置。
+- 结论：功能未删减，核心能力（分层分组、route 规则注入、hijack-dns/QUIC reject、CN 规则联动）保持不变，仅替换兼容字段表达方式。
+
+## 2026-02-27（terminal DNS 泄露复盘 + 配置目录统一）
+- 复盘官方迁移文档后确认：**legacy DNS server（无 detour）默认走“默认出站”**，而 **new DNS server（无 detour）默认走“空 direct 出站”**。
+- 这会导致 VT 逻辑迁移到 terminal profile 时出现行为偏移：同样“未写 detour”的 `google` DoH server 在 terminal 下会直连，而不是沿用默认代理路径。
+- 结论：terminal profile 需对 `google` server 显式设置 `detour=Proxy`，才能与 VT 防泄露意图一致，同时继续避免 1.12+ 的 deprecated 告警。
+- 进一步排查发现：terminal profile 里的全局 `route.default_domain_resolver=default-dns` 也会扩大 direct 解析影响面，和 VT 语义存在偏移。
+- 修正方案：移除全局 `route.default_domain_resolver`，改为给 terminal 档的 dial outbounds 注入 `domain_resolver=default-dns`（含 `dns_direct` 和节点出站），保持 VT 行为同时满足 1.12+ 迁移要求。
+- 仍可能出现的“终端 DNS 泄露”常见根因（macOS）：系统 DNS 来自路由器/LAN 私网地址（DHCP 下常见），而 tun 的 auto_route 默认不会覆盖更具体的 LAN 路由，导致 DNS 查询直接走物理网卡绕过 tun（VT 客户端会通过系统 VPN 机制接管 DNS，因此不复现）。
+- 工程化修复：在 `fly on/off` 增加 macOS DNS guard（启动 tun 配置时临时把系统 DNS 固定到公网地址，并在停止时恢复），减少这类泄露的环境依赖。
+- DNS guard 补强：优先选择“当前有 IP 的网络服务”（避免 VPN 启动后默认路由接口变为 `utun*` 导致映射失败），并同时设置 IPv4/IPv6 公网 DNS（降低 IPv6 resolver 仍走本地链路的泄露概率），同时 flush 系统 DNS cache。
+- terminal profile 补强：对 `mixed-in` 注入 `route.rules[].action=resolve`（代理模式下由 sing-box DNS 统一解析，避免走系统 DNS）；并将 tun 入站的 `sniff_override_destination` 默认关闭（减少由“覆盖目的地为域名”触发的额外解析链路）。
+- 同步完成配置产物目录统一：
+  - 默认 `CONFIG_OUTPUT_DIR=./runtime-configs`
+  - `CONFIG_JSON/CONFIG_JSON_IOS/CONFIG_JSON_TERMINAL` 默认全部落在该目录
+  - `fly on` 交互扫描目录切换到 `runtime-configs/`，支持自命名 `*.json`。

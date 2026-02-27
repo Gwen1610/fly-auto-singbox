@@ -15,6 +15,7 @@ __pycache__/
 /cache.db
 /config.json
 /config.*.json
+/runtime-configs/
 ruleset/*.json
 example/*.config
 example/correct.json

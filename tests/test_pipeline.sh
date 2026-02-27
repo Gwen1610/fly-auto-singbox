@@ -163,8 +163,10 @@ ROUTE_RULES_FILE="./config/route-rules.json"
 ROUTE_RULES_FILE_RULESET="./config/route-rules.ruleset.json"
 BASE_TEMPLATE_FILE="./config/base-template.json"
 BASE_TEMPLATE_FILE_IOS="./config/base-template.ios.json"
-CONFIG_JSON="./config.json"
-CONFIG_JSON_IOS="./config.ios.json"
+CONFIG_OUTPUT_DIR="./runtime-configs"
+CONFIG_JSON="./runtime-configs/config.json"
+CONFIG_JSON_IOS="./runtime-configs/config.ios.json"
+CONFIG_JSON_TERMINAL="./runtime-configs/config.terminal.json"
 PID_FILE="./.sing-box.pid"
 LOG_FILE="./sing-box.log"
 SINGBOX_VERSION="1.12.20"
@@ -179,20 +181,20 @@ assert_contains '"tag": "A-JP-01"' "./build/nodes.json"
 assert_contains '"tag": "B-SG-01"' "./build/nodes.json"
 
 ./fly build-config
-assert_file_exists "./config.json"
-assert_contains '"tag": "Proxy"' "./config.json"
-assert_contains '"tag": "America"' "./config.json"
-assert_contains '"tag": "HongKong"' "./config.json"
-assert_contains '"tag": "A-HongKong"' "./config.json"
-assert_contains '"tag": "B-HongKong"' "./config.json"
-assert_contains '"tag": "Streaming"' "./config.json"
-assert_contains '"tag": "AI"' "./config.json"
-assert_not_contains 'geosite' "./config.json"
-assert_not_contains 'geoip' "./config.json"
+assert_file_exists "./runtime-configs/config.json"
+assert_contains '"tag": "Proxy"' "./runtime-configs/config.json"
+assert_contains '"tag": "America"' "./runtime-configs/config.json"
+assert_contains '"tag": "HongKong"' "./runtime-configs/config.json"
+assert_contains '"tag": "A-HongKong"' "./runtime-configs/config.json"
+assert_contains '"tag": "B-HongKong"' "./runtime-configs/config.json"
+assert_contains '"tag": "Streaming"' "./runtime-configs/config.json"
+assert_contains '"tag": "AI"' "./runtime-configs/config.json"
+assert_not_contains 'geosite' "./runtime-configs/config.json"
+assert_not_contains 'geoip' "./runtime-configs/config.json"
 python3 - <<'PY'
 import json
 
-with open("./config.json", "r", encoding="utf-8") as f:
+with open("./runtime-configs/config.json", "r", encoding="utf-8") as f:
     cfg = json.load(f)
 
 route = cfg.get("route", {})
@@ -342,7 +344,7 @@ assert_not_contains '"geoip": \[' "./config/route-rules.json"
 python3 - <<'PY'
 import json
 
-with open("./config.json", "r", encoding="utf-8") as f:
+with open("./runtime-configs/config.json", "r", encoding="utf-8") as f:
     cfg = json.load(f)
 
 rules = cfg.get("route", {}).get("rules", [])
@@ -422,7 +424,7 @@ PY
 python3 - <<'PY'
 import json
 
-with open("./config.json", "r", encoding="utf-8") as f:
+with open("./runtime-configs/config.json", "r", encoding="utf-8") as f:
     cfg = json.load(f)
 
 route_sets = cfg.get("route", {}).get("rule_set", [])
@@ -486,6 +488,82 @@ if "external_controller" not in exp.get("clash_api", {}):
     raise SystemExit("ASSERT FAIL: expected experimental.clash_api.external_controller in desktop config.json")
 PY
 
+./fly build-config --ruleset --profile terminal
+assert_file_exists "./runtime-configs/config.terminal.json"
+python3 - <<'PY'
+import json
+
+with open("./runtime-configs/config.terminal.json", "r", encoding="utf-8") as f:
+    cfg = json.load(f)
+
+route = cfg.get("route", {})
+if "default_domain_resolver" in route:
+    raise SystemExit("ASSERT FAIL: terminal profile should avoid global route.default_domain_resolver to keep VT DNS behavior")
+
+dns = cfg.get("dns", {})
+servers = dns.get("servers", [])
+server_by_tag = {item.get("tag"): item for item in servers if isinstance(item, dict)}
+for tag in ("default-dns", "system-dns", "google"):
+    if tag not in server_by_tag:
+        raise SystemExit(f"ASSERT FAIL: expected terminal dns server {tag}")
+if server_by_tag["default-dns"].get("type") != "udp":
+    raise SystemExit("ASSERT FAIL: expected terminal default-dns type=udp")
+if server_by_tag["google"].get("type") != "https":
+    raise SystemExit("ASSERT FAIL: expected terminal google type=https")
+if server_by_tag["google"].get("detour") != "Proxy":
+    raise SystemExit("ASSERT FAIL: expected terminal google detour=Proxy to match VT anti-leak intent")
+if server_by_tag["google"].get("domain_resolver") != "default-dns":
+    raise SystemExit("ASSERT FAIL: expected terminal google server domain_resolver=default-dns for DoH bootstrap")
+if "address" in server_by_tag["default-dns"]:
+    raise SystemExit("ASSERT FAIL: expected terminal profile to avoid legacy dns address field on managed servers")
+if server_by_tag["default-dns"].get("detour") in {"dns_direct", "direct"}:
+    raise SystemExit("ASSERT FAIL: terminal default-dns should not detour to direct-type outbound (startup fatal in 1.12+)")
+
+rules = dns.get("rules", [])
+if any(isinstance(item, dict) and item.get("outbound") == "any" for item in rules):
+    raise SystemExit("ASSERT FAIL: expected terminal profile dns.rules to avoid deprecated outbound=any item")
+if not any(isinstance(item, dict) and item.get("query_type") == "HTTPS" and item.get("action") == "predefined" for item in rules):
+    raise SystemExit("ASSERT FAIL: expected terminal profile query_type HTTPS predefined action rule")
+if not any(isinstance(item, dict) and item.get("clash_mode") == "direct" and item.get("server") == "default-dns" for item in rules):
+    raise SystemExit("ASSERT FAIL: expected terminal profile clash_mode=direct to use default-dns")
+if any(isinstance(item, dict) and item.get("clash_mode") == "direct" and item.get("server") == "system-dns" for item in rules):
+    raise SystemExit("ASSERT FAIL: terminal profile should not route clash_mode=direct to system-dns")
+
+outbounds = cfg.get("outbounds", [])
+dns_direct = next((item for item in outbounds if isinstance(item, dict) and item.get("tag") == "dns_direct"), None)
+if not dns_direct:
+    raise SystemExit("ASSERT FAIL: expected dns_direct outbound in terminal profile")
+if dns_direct.get("domain_resolver") != "default-dns":
+    raise SystemExit("ASSERT FAIL: expected dns_direct outbound domain_resolver=default-dns")
+
+inbounds = cfg.get("inbounds", [])
+tun_in = next((item for item in inbounds if isinstance(item, dict) and item.get("type") == "tun"), None)
+if not tun_in:
+    raise SystemExit("ASSERT FAIL: expected tun inbound in terminal profile")
+if tun_in.get("sniff_override_destination") is not False:
+    raise SystemExit("ASSERT FAIL: expected terminal tun sniff_override_destination=false (reduce DNS leak surfaces)")
+
+route_rules = route.get("rules", [])
+if not any(isinstance(item, dict) and item.get("action") == "hijack-dns" for item in route_rules):
+    raise SystemExit("ASSERT FAIL: expected terminal profile to keep hijack-dns rule")
+if not any(
+    isinstance(item, dict)
+    and item.get("action") == "reject"
+    and any(isinstance(rule, dict) and rule.get("protocol") == "quic" for rule in item.get("rules", []))
+    for item in route_rules
+):
+    raise SystemExit("ASSERT FAIL: expected terminal profile to keep QUIC reject rule")
+if not any(isinstance(item, dict) and item.get("action") == "resolve" and item.get("inbound") == "mixed-in" for item in route_rules):
+    raise SystemExit("ASSERT FAIL: expected terminal profile to add mixed-in resolve rule (avoid system DNS leaks in proxy mode)")
+
+cn_direct_rules = [
+    item for item in route_rules
+    if isinstance(item, dict) and item.get("action") == "direct" and item.get("rule_set") == ["geosite-cn", "geoip-cn"]
+]
+if len(cn_direct_rules) != 1:
+    raise SystemExit(f"ASSERT FAIL: expected terminal profile to keep one CN direct route rule, got {len(cn_direct_rules)}")
+PY
+
 # Simulate a user-modified iOS template that accidentally contains new DNS schema fields.
 python3 - <<'PY'
 import json
@@ -507,11 +585,11 @@ with open(path, "w", encoding="utf-8") as f:
 PY
 
 ./fly build-config --target ios --ruleset
-assert_file_exists "./config.ios.json"
+assert_file_exists "./runtime-configs/config.ios.json"
 python3 - <<'PY'
 import json
 
-with open("./config.ios.json", "r", encoding="utf-8") as f:
+with open("./runtime-configs/config.ios.json", "r", encoding="utf-8") as f:
     cfg = json.load(f)
 
 inbounds = cfg.get("inbounds", [])
@@ -588,7 +666,7 @@ if ! printf '%s\n' "${pub_out}" | grep -q "staged_changes=true"; then
 fi
 
 ./fly pipeline
-assert_file_exists "./config.json"
+assert_file_exists "./runtime-configs/config.json"
 
 cat > "./build/releases.json" <<'JSON'
 [
@@ -638,7 +716,8 @@ assert_contains 'will_skip=true' "${WORK_DIR}/install.out"
 ./fly install-guide --os darwin --arch arm64 --version latest --releases-json ./build/releases.json > "${WORK_DIR}/install-guide.out"
 assert_contains 'stable-darwin-arm64.tar.gz' "${WORK_DIR}/install-guide.out"
 
-./fly on
+cp "./runtime-configs/config.terminal.json" "./runtime-configs/custom.profile.json"
+./fly on --config custom.profile.json
 assert_file_exists "./.sing-box.pid"
 pid_before="$(cat ./.sing-box.pid)"
 status_out="$(./fly status)"
@@ -647,7 +726,7 @@ if [[ "${status_out}" != running* ]]; then
   exit 1
 fi
 
-on_again="$(./fly on)"
+on_again="$(./fly on --config custom.profile.json)"
 if [[ "${on_again}" != already\ running* ]]; then
   echo "ASSERT FAIL: expected idempotent on output, got '${on_again}'" >&2
   exit 1

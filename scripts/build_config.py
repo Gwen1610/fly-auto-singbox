@@ -348,17 +348,21 @@ def collect_node_domain_suffixes(outbounds):
     return sorted(suffixes)
 
 
-def ensure_inbound_sniff(config):
+def ensure_inbound_sniff(config, compat_profile="vt"):
     inbounds = config.get("inbounds", [])
     if not isinstance(inbounds, list):
         return
+    profile = str(compat_profile).strip().lower()
     for inbound in inbounds:
         if not isinstance(inbound, dict):
             continue
         if inbound.get("type") not in {"tun", "mixed"}:
             continue
         inbound.setdefault("sniff", True)
-        inbound.setdefault("sniff_override_destination", True)
+        if inbound.get("type") == "tun" and profile == "terminal":
+            inbound.setdefault("sniff_override_destination", False)
+        else:
+            inbound.setdefault("sniff_override_destination", True)
 
 
 def upsert_dns_server(servers, tag: str, desired: dict):
@@ -557,14 +561,180 @@ def ensure_connectivity_dns_ios(config, outbounds):
     ensure_connectivity_dns(config, outbounds)
 
 
-def ensure_connectivity_route(config, user_rules):
+def ensure_connectivity_dns_terminal(config, outbounds):
+    dns = config.get("dns")
+    if not isinstance(dns, dict):
+        dns = {}
+        config["dns"] = dns
+
+    servers = dns.get("servers")
+    if not isinstance(servers, list):
+        servers = []
+        dns["servers"] = servers
+
+    managed_servers = [
+        {
+            "tag": "default-dns",
+            "type": "udp",
+            "server": "223.5.5.5",
+            "server_port": 53,
+        },
+        {
+            "tag": "system-dns",
+            "type": "local",
+        },
+        {
+            "tag": "google",
+            "type": "https",
+            "server": "dns.google",
+            "server_port": 443,
+            "path": "/dns-query",
+            "detour": "Proxy",
+            "domain_resolver": "default-dns",
+        },
+    ]
+    managed_server_tags = {item["tag"] for item in managed_servers}
+    preserved_servers = [
+        item
+        for item in servers
+        if isinstance(item, dict) and str(item.get("tag", "")).strip() not in (managed_server_tags | {"local", "block-dns"})
+    ]
+    dns["servers"] = [*deepcopy(managed_servers), *preserved_servers]
+
+    dns["final"] = "google"
+    dns["strategy"] = "ipv4_only"
+    dns.setdefault("disable_cache", False)
+    dns.setdefault("disable_expire", False)
+    dns.setdefault("independent_cache", False)
+
+    rules = dns.get("rules")
+    if not isinstance(rules, list):
+        rules = []
+        dns["rules"] = rules
+
+    node_suffixes = collect_node_domain_suffixes(outbounds)
+    prefix_rules = []
+    if node_suffixes:
+        prefix_rules.append(
+            {
+                "type": "logical",
+                "mode": "or",
+                "rules": [{"domain_suffix": suffix} for suffix in node_suffixes],
+                "server": "default-dns",
+            }
+        )
+    prefix_rules.append(
+        {
+            "type": "logical",
+            "mode": "or",
+            "rules": [{"domain_suffix": suffix} for suffix in GOOGLE_DNS_SUFFIXES],
+            "server": "google",
+        }
+    )
+
+    cn_dns_rule = None
+    route_rule_sets = config.get("route", {}).get("rule_set", [])
+    if isinstance(route_rule_sets, list):
+        route_rule_set_tags = {
+            item.get("tag")
+            for item in route_rule_sets
+            if isinstance(item, dict) and isinstance(item.get("tag"), str)
+        }
+        for tag in ("cnsite", "geosite-cn", "qx-china"):
+            if tag in route_rule_set_tags:
+                cn_dns_rule = {"rule_set": tag, "server": "default-dns"}
+                break
+
+    managed_rules = [
+        *prefix_rules,
+        {"query_type": "HTTPS", "action": "predefined", "rcode": "REFUSED"},
+        {"clash_mode": "direct", "server": "default-dns"},
+        {"clash_mode": "global", "server": "google"},
+    ]
+    if cn_dns_rule:
+        managed_rules.append(cn_dns_rule)
+
+    managed_rule_keys = []
+    for item in managed_rules:
+        if "clash_mode" in item:
+            managed_rule_keys.append(("clash_mode", item["clash_mode"]))
+        elif "query_type" in item and item.get("action") == "predefined":
+            managed_rule_keys.append(("query_type_predefined", item["query_type"], item.get("rcode")))
+        elif "rule_set" in item:
+            managed_rule_keys.append(("rule_set", item["rule_set"]))
+        elif item.get("type") == "logical" and item.get("server") in {"default-dns", "google"}:
+            suffixes = []
+            for rule in item.get("rules", []):
+                if isinstance(rule, dict) and isinstance(rule.get("domain_suffix"), str):
+                    suffixes.append(rule["domain_suffix"])
+            managed_rule_keys.append(("logical_domain_suffix", tuple(sorted(suffixes)), item.get("server")))
+        else:
+            managed_rule_keys.append(("raw", json.dumps(item, ensure_ascii=False, sort_keys=True)))
+
+    def is_managed_dns_rule(item):
+        if not isinstance(item, dict):
+            return False
+        if "clash_mode" in item:
+            return ("clash_mode", item.get("clash_mode")) in managed_rule_keys
+        if "query_type" in item:
+            if item.get("action") == "predefined":
+                return ("query_type_predefined", item.get("query_type"), item.get("rcode")) in managed_rule_keys
+            if item.get("server") == "block-dns":
+                return True
+        if "rule_set" in item and isinstance(item.get("rule_set"), str):
+            return ("rule_set", item.get("rule_set")) in managed_rule_keys
+        if item.get("type") == "logical" and item.get("server") in {"default-dns", "local", "google"}:
+            suffixes = []
+            for rule in item.get("rules", []):
+                if isinstance(rule, dict) and isinstance(rule.get("domain_suffix"), str):
+                    suffixes.append(rule["domain_suffix"])
+            if suffixes:
+                return (
+                    "logical_domain_suffix",
+                    tuple(sorted(suffixes)),
+                    "default-dns" if item.get("server") == "local" else item.get("server"),
+                ) in managed_rule_keys
+        if item.get("outbound") == "any":
+            return True
+        return False
+
+    preserved_rules = [item for item in rules if not is_managed_dns_rule(item)]
+    dns["rules"] = [*managed_rules, *preserved_rules]
+
+
+def ensure_terminal_outbound_domain_resolver(outbounds):
+    if not isinstance(outbounds, list):
+        return
+
+    for outbound in outbounds:
+        if not isinstance(outbound, dict):
+            continue
+        outbound_type = str(outbound.get("type", "")).strip().lower()
+        if outbound_type in {"selector", "urltest"}:
+            continue
+        if outbound_type == "direct":
+            outbound.setdefault("domain_resolver", "default-dns")
+            continue
+
+        server = outbound.get("server")
+        if isinstance(server, str):
+            host = server.strip()
+            if host and not is_ip_address(host):
+                outbound.setdefault("domain_resolver", "default-dns")
+
+
+def ensure_connectivity_route(config, user_rules, compat_profile="vt"):
     route = config.get("route")
     if not isinstance(route, dict):
         route = {}
         config["route"] = route
 
-    # NOTE: Do not inject `default_domain_resolver` by default.
-    # Older sing-box cores (e.g. 1.11.x) don't know this field and will fail to decode config.
+    profile = str(compat_profile).strip().lower()
+    # NOTE:
+    # - VT 1.11.x: this field is unknown and causes decode failure.
+    # - Terminal profile: keep DNS behavior close to VT by configuring
+    #   `domain_resolver` on dial outbounds instead of using a global default.
+    route.pop("default_domain_resolver", None)
 
     base_rules = [
         {
@@ -581,6 +751,8 @@ def ensure_connectivity_route(config, user_rules):
         },
         {"ip_is_private": True, "action": "direct"},
     ]
+    if profile == "terminal":
+        base_rules.insert(2, {"inbound": "mixed-in", "action": "resolve"})
 
     route_rule_sets = route.get("rule_set")
     cn_route_tags = []
@@ -618,7 +790,7 @@ def ensure_connectivity_route(config, user_rules):
 
 
 def ensure_connectivity_route_ios(config, user_rules):
-    return ensure_connectivity_route(config, user_rules)
+    return ensure_connectivity_route(config, user_rules, compat_profile="vt")
 
 
 def build_outbounds(grouped, strategy):
@@ -802,10 +974,14 @@ def validate_rules(rules_cfg, outbound_tags):
     return final, rules
 
 
-def build_config(base_template, outbounds, final_outbound, rules, extra_rule_sets=None, target="desktop"):
+def build_config(base_template, outbounds, final_outbound, rules, extra_rule_sets=None, target="desktop", compat_profile="vt"):
     config = deepcopy(base_template)
     if "inbounds" not in config:
         raise RuntimeError("base template must contain inbounds")
+
+    profile = str(compat_profile).strip().lower()
+    if profile not in {"vt", "terminal"}:
+        raise RuntimeError(f"unsupported compat profile: {compat_profile}")
 
     route_base = config.get("route", {})
     if not isinstance(route_base, dict):
@@ -851,13 +1027,19 @@ def build_config(base_template, outbounds, final_outbound, rules, extra_rule_set
     if str(target).strip().lower() == "ios":
         route_base.pop("default_domain_resolver", None)
         route_base["rules"] = ensure_connectivity_route_ios(config, rules)
+    elif profile == "terminal":
+        route_base["rules"] = ensure_connectivity_route(config, rules, compat_profile="terminal")
     else:
-        route_base["rules"] = ensure_connectivity_route(config, rules)
+        route_base["rules"] = ensure_connectivity_route(config, rules, compat_profile="vt")
 
     config["outbounds"] = outbounds
-    ensure_inbound_sniff(config)
+    if profile == "terminal":
+        ensure_terminal_outbound_domain_resolver(config["outbounds"])
+    ensure_inbound_sniff(config, compat_profile=profile)
     if str(target).strip().lower() == "ios":
         ensure_connectivity_dns_ios(config, outbounds)
+    elif profile == "terminal":
+        ensure_connectivity_dns_terminal(config, outbounds)
     else:
         ensure_connectivity_dns(config, outbounds)
     return config
@@ -871,6 +1053,12 @@ def main():
     parser.add_argument("--template-file", required=True)
     parser.add_argument("--output-file", required=True)
     parser.add_argument("--target", choices=["desktop", "ios"], default="desktop")
+    parser.add_argument(
+        "--compat-profile",
+        choices=["vt", "terminal"],
+        default="vt",
+        help="Compatibility profile: vt (1.11.4-compatible legacy fields) or terminal (modern 1.12+ fields).",
+    )
     parser.add_argument(
         "--compact",
         action="store_true",
@@ -899,6 +1087,7 @@ def main():
         rules,
         extra_rule_sets=extra_rule_sets,
         target=args.target,
+        compat_profile=args.compat_profile,
     )
     output_path = Path(args.output_file).resolve()
     output_path.parent.mkdir(parents=True, exist_ok=True)

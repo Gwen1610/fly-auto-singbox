@@ -6,6 +6,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG_DIR="${ROOT_DIR}/config"
 TEMPLATE_DIR="${ROOT_DIR}/config_template"
 BUILD_DIR="${ROOT_DIR}/build"
+STATE_DIR="${ROOT_DIR}/state"
 SCRIPTS_DIR="${ROOT_DIR}/scripts"
 ENV_FILE="${CONFIG_DIR}/fly.env"
 ENV_EXAMPLE_FILE="${TEMPLATE_DIR}/fly.env.example"
@@ -17,6 +18,8 @@ GROUP_STRATEGY_FILE_DEFAULT="${CONFIG_DIR}/group-strategy.json"
 GROUP_STRATEGY_EXAMPLE_FILE="${TEMPLATE_DIR}/group-strategy.example.json"
 ROUTE_RULES_FILE_DEFAULT="${CONFIG_DIR}/route-rules.json"
 ROUTE_RULES_EXAMPLE_FILE="${TEMPLATE_DIR}/route-rules.example.json"
+
+MACOS_DNS_GUARD_STATE_FILE="${STATE_DIR}/macos-dns-guard.json"
 
 COLOR_RESET=$'\033[0m'
 COLOR_BLUE=$'\033[34m'
@@ -110,13 +113,15 @@ Usage:
   ./fly check-singbox
   ./fly install-singbox [--version v] [--os linux|darwin] [--arch amd64|arm64] [--install-dir dir] [--dry-run] [--force]
   ./fly install-guide
-  ./fly build-rules [--ruleset] [--compact] [--base-url url] [--ruleset-dir dir] [--skip-compile]
+  ./fly build-rules [--ruleset] [--compact] [--base-url url] [--ruleset-dir dir] [--skip-compile] [--interactive]
   ./fly build-ruleset [--base-url url] [--ruleset-dir dir] [--skip-compile]  # alias of build-rules --ruleset
   ./fly publish-ruleset [--message msg] [--dry-run]
   ./fly extract
-  ./fly build-config [--target desktop|ios] [--ruleset] [--compact]
-  ./fly pipeline [--target desktop|ios] [--ruleset] [--compact]
-  ./fly on
+  ./fly build-config [--target desktop|ios] [--profile vt|terminal] [--ruleset] [--compact] [--interactive]
+  ./fly pipeline [--target desktop|ios] [--profile vt|terminal] [--ruleset] [--compact] [--interactive]
+  ./fly interactive
+  ./fly menu    # alias of interactive
+  ./fly on [--config path] [--interactive]
   ./fly off
   ./fly status
   ./fly log [-n lines] [--no-follow]
@@ -130,13 +135,15 @@ Command summary:
   check-singbox Show installed sing-box path and version
   install-singbox Auto download + install sing-box for linux/mac
   install-guide  Alias of install-singbox --dry-run
-  build-rules   Build route rules from QX/Clash sources (inline by default; use --ruleset for rule-set mode)
+  build-rules   Build route rules from QX/Clash sources (inline by default; use --ruleset or --interactive for mode selection)
   build-ruleset Alias of build-rules --ruleset (kept for backward compatibility)
   publish-ruleset Stage/commit/push ruleset/ to GitHub
   extract       Extract region nodes only (US/HK/SG/JP, no route rules)
-  build-config  Build final config.json by injecting route rules into extracted nodes
-  pipeline      Run extract + build-config (or --ruleset: extract + build-rules --ruleset + build-config --ruleset)
-  on            Start sing-box in background (nohup + PID file)
+  build-config  Build final config (supports vt/terminal desktop profile + interactive mode selection)
+  pipeline      Run extract + build-config (or --ruleset path), supports --profile and --interactive
+  interactive   Open unified build menu (extract / build-rules / build-config / pipeline)
+  menu          Alias of interactive
+  on            Start sing-box in background (can interactively choose *.json in CONFIG_OUTPUT_DIR)
   off           Stop sing-box using PID file (with pkill fallback)
   status        Show running status from PID file
   log           Tail sing-box log file
@@ -178,8 +185,21 @@ load_env() {
   : "${ROUTE_RULES_FILE_RULESET:=${ROUTE_RULES_FILE_ONLINE:-./config/route-rules.ruleset.json}}"
   : "${BASE_TEMPLATE_FILE:=./config/base-template.json}"
   : "${BASE_TEMPLATE_FILE_IOS:=./config/base-template.ios.json}"
-  : "${CONFIG_JSON:=./config.json}"
-  : "${CONFIG_JSON_IOS:=./config.ios.json}"
+  : "${BASE_TEMPLATE_FILE_TERMINAL:=./config/base-template.json}"
+  : "${CONFIG_OUTPUT_DIR:=./runtime-configs}"
+  : "${CONFIG_JSON:=}"
+  : "${CONFIG_JSON_IOS:=}"
+  : "${CONFIG_JSON_TERMINAL:=}"
+  if [[ -z "${CONFIG_JSON}" || "${CONFIG_JSON}" == "./config.json" ]]; then
+    CONFIG_JSON="${CONFIG_OUTPUT_DIR}/config.json"
+  fi
+  if [[ -z "${CONFIG_JSON_IOS}" || "${CONFIG_JSON_IOS}" == "./config.ios.json" ]]; then
+    CONFIG_JSON_IOS="${CONFIG_OUTPUT_DIR}/config.ios.json"
+  fi
+  if [[ -z "${CONFIG_JSON_TERMINAL}" || "${CONFIG_JSON_TERMINAL}" == "./config.terminal.json" ]]; then
+    CONFIG_JSON_TERMINAL="${CONFIG_OUTPUT_DIR}/config.terminal.json"
+  fi
+  : "${DESKTOP_PROFILE_DEFAULT:=vt}"
   : "${RULESET_BASE_URL:=}"
   : "${RULESET_DIR:=./ruleset}"
   : "${RULESET_DOWNLOAD_DETOUR:=Proxy}"
@@ -191,6 +211,7 @@ load_env() {
   : "${SINGBOX_RELEASES_API:=https://api.github.com/repos/SagerNet/sing-box/releases}"
   : "${API_HOST:=127.0.0.1:9090}"
   : "${API_SECRET:=}"
+  : "${MACOS_DNS_GUARD:=true}"
 
   EXTRACT_PROVIDERS_FILE="$(abs_path "${EXTRACT_PROVIDERS_FILE}")"
   RULE_SOURCES_FILE="$(abs_path "${RULE_SOURCES_FILE}")"
@@ -200,11 +221,239 @@ load_env() {
   ROUTE_RULES_FILE_RULESET="$(abs_path "${ROUTE_RULES_FILE_RULESET}")"
   BASE_TEMPLATE_FILE="$(abs_path "${BASE_TEMPLATE_FILE}")"
   BASE_TEMPLATE_FILE_IOS="$(abs_path "${BASE_TEMPLATE_FILE_IOS}")"
+  BASE_TEMPLATE_FILE_TERMINAL="$(abs_path "${BASE_TEMPLATE_FILE_TERMINAL}")"
+  CONFIG_OUTPUT_DIR="$(abs_path "${CONFIG_OUTPUT_DIR}")"
   CONFIG_JSON="$(abs_path "${CONFIG_JSON}")"
   CONFIG_JSON_IOS="$(abs_path "${CONFIG_JSON_IOS}")"
+  CONFIG_JSON_TERMINAL="$(abs_path "${CONFIG_JSON_TERMINAL}")"
   RULESET_DIR="$(abs_path "${RULESET_DIR}")"
   PID_FILE="$(abs_path "${PID_FILE}")"
   LOG_FILE="$(abs_path "${LOG_FILE}")"
+}
+
+is_darwin() {
+  [[ "$(uname -s)" == "Darwin" ]]
+}
+
+config_has_tun_inbound() {
+  local config_file="$1"
+  [[ -f "${config_file}" ]] || return 1
+  "${PYTHON_BIN}" - "${config_file}" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+cfg = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+inbounds = cfg.get("inbounds", [])
+has_tun = any(isinstance(item, dict) and item.get("type") == "tun" for item in inbounds)
+raise SystemExit(0 if has_tun else 1)
+PY
+}
+
+macos_get_default_interface() {
+  route -n get default 2>/dev/null | awk '/interface:/{print $2; exit}'
+}
+
+macos_find_network_service_for_device() {
+  local device="$1"
+  command -v networksetup >/dev/null 2>&1 || return 1
+  local current=""
+  while IFS= read -r line; do
+    if [[ "${line}" == "("*") "* ]]; then
+      current="${line#*) }"
+      current="${current#\*}"
+      current="${current#"${current%%[![:space:]]*}"}"
+      continue
+    fi
+    if [[ -n "${current}" && "${line}" == *"Device: ${device}"* ]]; then
+      printf '%s\n' "${current}"
+      return 0
+    fi
+  done < <(networksetup -listnetworkserviceorder 2>/dev/null || true)
+  return 1
+}
+
+macos_get_primary_network_service() {
+  command -v networksetup >/dev/null 2>&1 || return 1
+
+  local -a services=()
+  local current=""
+  while IFS= read -r line; do
+    if [[ "${line}" == "("*") "* ]]; then
+      current="${line#*) }"
+      current="${current#\*}"
+      current="$(printf '%s' "${current}" | xargs || true)"
+      [[ -n "${current}" ]] || continue
+      services+=("${current}")
+    fi
+  done < <(networksetup -listnetworkserviceorder 2>/dev/null || true)
+
+  local service info ipv4 ipv6
+  for service in "${services[@]}"; do
+    info="$(networksetup -getinfo "${service}" 2>/dev/null || true)"
+    ipv4="$(printf '%s\n' "${info}" | awk -F': ' '/^IP address:/{print $2; exit}' | xargs || true)"
+    ipv6="$(printf '%s\n' "${info}" | awk -F': ' '/^IPv6 IP address:/{print $2; exit}' | xargs || true)"
+    if [[ -n "${ipv4}" && "${ipv4}" != "none" && "${ipv4}" != "0.0.0.0" ]]; then
+      printf '%s\n' "${service}"
+      return 0
+    fi
+    if [[ -n "${ipv6}" && "${ipv6}" != "none" ]]; then
+      printf '%s\n' "${service}"
+      return 0
+    fi
+  done
+
+  # Fallback: pick the first service in order.
+  if ((${#services[@]})); then
+    printf '%s\n' "${services[0]}"
+    return 0
+  fi
+  return 1
+}
+
+macos_dns_guard_write_state() {
+  local service="$1"
+  local mode="$2"
+  shift 2
+  mkdir -p "${STATE_DIR}"
+  "${PYTHON_BIN}" - "${service}" "${mode}" "$@" <<'PY' > "${MACOS_DNS_GUARD_STATE_FILE}"
+import json
+import sys
+
+service = sys.argv[1]
+mode = sys.argv[2]
+servers = sys.argv[3:]
+
+print(
+    json.dumps(
+        {
+            "service": service,
+            "mode": mode,
+            "servers": servers,
+        },
+        ensure_ascii=False,
+        indent=2,
+    )
+)
+PY
+}
+
+macos_dns_guard_apply_if_needed() {
+  local config_file="$1"
+  is_darwin || return 0
+  is_true "${MACOS_DNS_GUARD}" || return 0
+  command -v networksetup >/dev/null 2>&1 || return 0
+
+  if [[ -z "${SUDO_BIN}" ]]; then
+    warn "MACOS_DNS_GUARD is enabled but SUDO_BIN is empty; skip applying DNS guard"
+    return 0
+  fi
+
+  config_has_tun_inbound "${config_file}" || return 0
+
+  if [[ -f "${MACOS_DNS_GUARD_STATE_FILE}" ]]; then
+    return 0
+  fi
+
+  local device=""
+  device="$(macos_get_default_interface || true)"
+  local service=""
+  if [[ -n "${device}" && "${device}" != utun* ]]; then
+    service="$(macos_find_network_service_for_device "${device}" || true)"
+  fi
+  if [[ -z "${service}" ]]; then
+    service="$(macos_get_primary_network_service || true)"
+  fi
+  if [[ -z "${service}" ]]; then
+    warn "cannot detect a network service for macOS DNS guard; skip"
+    return 0
+  fi
+
+  local raw=""
+  raw="$(networksetup -getdnsservers "${service}" 2>/dev/null || true)"
+  local mode="list"
+  local -a servers=()
+  if printf '%s\n' "${raw}" | grep -q "There aren't any DNS Servers set"; then
+    mode="empty"
+  else
+    while IFS= read -r line; do
+      line="$(printf '%s' "${line}" | xargs || true)"
+      [[ -n "${line}" ]] || continue
+      servers+=("${line}")
+    done <<< "${raw}"
+  fi
+
+  if [[ "${mode}" == "empty" ]]; then
+    macos_dns_guard_write_state "${service}" "empty"
+  else
+    macos_dns_guard_write_state "${service}" "list" "${servers[@]}"
+  fi
+
+  # Force system DNS to public resolvers while sing-box is running.
+  # This prevents common macOS DNS leak scenarios when the system DNS comes from LAN/router (private IP),
+  # which may bypass tun routes due to more specific local routes.
+  run_as_sudo networksetup -setdnsservers "${service}" 223.5.5.5 223.6.6.6 2400:3200::1 2400:3200:baba::1 >/dev/null 2>&1 || {
+    warn "failed to apply macOS DNS guard via networksetup; skip"
+    rm -f "${MACOS_DNS_GUARD_STATE_FILE}" || true
+    return 0
+  }
+  run_as_sudo dscacheutil -flushcache >/dev/null 2>&1 || true
+  run_as_sudo killall -HUP mDNSResponder >/dev/null 2>&1 || true
+
+  if [[ -t 1 ]]; then
+    log "macOS DNS guard applied for '${service}' (restored on ./fly off)"
+  fi
+}
+
+macos_dns_guard_restore_if_needed() {
+  is_darwin || return 0
+  command -v networksetup >/dev/null 2>&1 || return 0
+  [[ -f "${MACOS_DNS_GUARD_STATE_FILE}" ]] || return 0
+  [[ -n "${SUDO_BIN}" ]] || return 0
+
+  local info=""
+  info="$("${PYTHON_BIN}" - "${MACOS_DNS_GUARD_STATE_FILE}" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+d = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+print(d.get("service", ""))
+print(d.get("mode", ""))
+for s in d.get("servers", []):
+    print(s)
+PY
+)" || return 0
+
+  local service mode
+  service="$(printf '%s\n' "${info}" | sed -n '1p')"
+  mode="$(printf '%s\n' "${info}" | sed -n '2p')"
+  if [[ -z "${service}" ]]; then
+    rm -f "${MACOS_DNS_GUARD_STATE_FILE}" || true
+    return 0
+  fi
+
+  if [[ "${mode}" == "empty" ]]; then
+    run_as_sudo networksetup -setdnsservers "${service}" empty >/dev/null 2>&1 || true
+  else
+    local -a servers=()
+    while IFS= read -r line; do
+      [[ -n "${line}" ]] || continue
+      servers+=("${line}")
+    done < <(printf '%s\n' "${info}" | sed -n '3,$p')
+    if ((${#servers[@]})); then
+      run_as_sudo networksetup -setdnsservers "${service}" "${servers[@]}" >/dev/null 2>&1 || true
+    else
+      run_as_sudo networksetup -setdnsservers "${service}" empty >/dev/null 2>&1 || true
+    fi
+  fi
+
+  rm -f "${MACOS_DNS_GUARD_STATE_FILE}" || true
+  run_as_sudo dscacheutil -flushcache >/dev/null 2>&1 || true
+  run_as_sudo killall -HUP mDNSResponder >/dev/null 2>&1 || true
+  if [[ -t 1 ]]; then
+    log "macOS DNS guard restored for '${service}'"
+  fi
 }
 
 detect_os() {
@@ -331,6 +580,173 @@ _fly_tui_prompt() {
       fi
     done
   done
+}
+
+fly_tui_symbol_for_index() {
+  local idx="${1:-0}"
+  local symbols="123456789abcdefghijklmnopqrstuvwxyz"
+  if ((idx < 0)); then
+    return 1
+  fi
+  if ((idx >= ${#symbols})); then
+    return 1
+  fi
+  printf '%s\n' "${symbols:${idx}:1}"
+}
+
+fly_can_tui() {
+  [[ -t 0 && -t 1 ]]
+}
+
+get_terminal_core_version_hint() {
+  local info=""
+  info="$(get_singbox_installed_info || true)"
+  if [[ -n "${info}" ]]; then
+    local installed_norm
+    installed_norm="$(printf '%s\n' "${info}" | sed -n '3p')"
+    if [[ -n "${installed_norm}" ]]; then
+      printf '%s\n' "${installed_norm}"
+      return 0
+    fi
+  fi
+  local fallback
+  fallback="$(normalize_version "${SINGBOX_VERSION}")"
+  if [[ -n "${fallback}" ]]; then
+    printf '%s\n' "${fallback}"
+  else
+    printf '%s\n' "1.12+"
+  fi
+}
+
+_FLY_BUILD_TARGET="desktop"
+_FLY_BUILD_RULESET="false"
+_FLY_BUILD_PROFILE="vt"
+
+fly_tui_choose_build_mode() {
+  local target_default="${1:-desktop}"
+  local ruleset_default="${2:-false}"
+  local profile_default="${3:-vt}"
+
+  _FLY_BUILD_TARGET="${target_default}"
+  _FLY_BUILD_RULESET="${ruleset_default}"
+  _FLY_BUILD_PROFILE="${profile_default}"
+
+  _fly_tui_title "配置生成向导 · 第1步 选择平台"
+  _fly_tui_option "1" "iOS（VT 1.11.4）" ""
+  _fly_tui_option "2" "电脑端" ""
+  _fly_tui_prompt "选择平台"
+  local selected="${_FLY_TUI_RESULT}"
+  [[ "${selected}" == "q" ]] && return 1
+  if [[ "${selected}" == "1" ]]; then
+    _FLY_BUILD_TARGET="ios"
+    _FLY_BUILD_PROFILE="vt"
+  else
+    _FLY_BUILD_TARGET="desktop"
+  fi
+
+  _fly_tui_title "配置生成向导 · 第2步 Rule Set 模式"
+  _fly_tui_option "1" "有 Rule Set（远程 .srs）" "更小配置"
+  _fly_tui_option "2" "无 Rule Set（内联规则）" "直观可读"
+  _fly_tui_prompt "选择规则模式"
+  selected="${_FLY_TUI_RESULT}"
+  [[ "${selected}" == "q" ]] && return 1
+  if [[ "${selected}" == "1" ]]; then
+    _FLY_BUILD_RULESET="true"
+  else
+    _FLY_BUILD_RULESET="false"
+  fi
+
+  if [[ "${_FLY_BUILD_TARGET}" == "desktop" ]]; then
+    local terminal_ver=""
+    terminal_ver="$(get_terminal_core_version_hint)"
+    _fly_tui_title "配置生成向导 · 第3步 电脑端内核兼容"
+    _fly_tui_option "1" "VT 客户端兼容" "核心 1.11.4（无告警）"
+    _fly_tui_option "2" "终端内核兼容" "当前检测 ${terminal_ver}"
+    _fly_tui_prompt "选择兼容方案"
+    selected="${_FLY_TUI_RESULT}"
+    [[ "${selected}" == "q" ]] && return 1
+    if [[ "${selected}" == "1" ]]; then
+      _FLY_BUILD_PROFILE="vt"
+    else
+      _FLY_BUILD_PROFILE="terminal"
+    fi
+  fi
+
+  return 0
+}
+
+fly_tui_choose_rules_mode() {
+  local default_ruleset="${1:-false}"
+  _FLY_BUILD_RULESET="${default_ruleset}"
+  _fly_tui_title "规则构建向导 · Rule Set 模式"
+  _fly_tui_option "1" "有 Rule Set（远程 .srs）" "适合 iOS/小体积"
+  _fly_tui_option "2" "无 Rule Set（内联规则）" "便于本地预览"
+  _fly_tui_prompt "选择规则模式"
+  local selected="${_FLY_TUI_RESULT}"
+  [[ "${selected}" == "q" ]] && return 1
+  if [[ "${selected}" == "1" ]]; then
+    _FLY_BUILD_RULESET="true"
+  else
+    _FLY_BUILD_RULESET="false"
+  fi
+  return 0
+}
+
+_FLY_ON_CONFIG_RESULT=""
+
+fly_tui_choose_on_config() {
+  local search_dir="${1:-${CONFIG_OUTPUT_DIR:-$(pwd)}}"
+  [[ -d "${search_dir}" ]] || return 1
+  local -a files=()
+  local -a display=()
+  local -a selected_files=()
+  local -a selected_syms=()
+
+  while IFS= read -r entry; do
+    [[ -n "${entry}" ]] || continue
+    files+=("${search_dir}/${entry}")
+    display+=("${entry}")
+  done < <(find "${search_dir}" -maxdepth 1 -type f -name '*.json' -print | sed -E 's#^.*/##' | sort)
+
+  if ((${#files[@]} == 0)); then
+    return 1
+  fi
+
+  _fly_tui_title "fly on — 选择启动配置"
+  local idx=0
+  local shown=0
+  while ((idx < ${#files[@]})); do
+    local sym=""
+    if ! sym="$(fly_tui_symbol_for_index "${shown}")"; then
+      printf '  ...(文件过多，仅显示前 %d 个，可用 --config 指定其他文件)\n' "${shown}"
+      break
+    fi
+    local label="${display[$idx]}"
+    local meta=""
+    case "${label}" in
+      config.json) meta="桌面 VT 默认" ;;
+      config.terminal.json) meta="桌面终端 1.12+" ;;
+      config.ios.json) meta="iOS VT" ;;
+    esac
+    _fly_tui_option "${sym}" "${label}" "${meta}"
+    selected_files+=("${files[$idx]}")
+    selected_syms+=("${sym}")
+    ((shown++))
+    ((idx++))
+  done
+
+  _fly_tui_prompt "选择配置"
+  local selected="${_FLY_TUI_RESULT}"
+  [[ "${selected}" == "q" ]] && return 1
+  idx=0
+  while ((idx < ${#selected_files[@]})); do
+    if [[ "${selected_syms[$idx]}" == "${selected}" ]]; then
+      _FLY_ON_CONFIG_RESULT="${selected_files[$idx]}"
+      return 0
+    fi
+    ((idx++))
+  done
+  return 1
 }
 
 guess_ruleset_base_url_from_git() {
@@ -763,18 +1179,22 @@ cmd_build_rules() {
   [[ -f "${RULE_SOURCES_FILE}" ]] || die "missing rule sources config: ${RULE_SOURCES_FILE}"
 
   local ruleset="false"
+  local mode_explicit="false"
   local base_url="${RULESET_BASE_URL}"
   local ruleset_dir="${RULESET_DIR}"
   local skip_compile="false"
   local compact="false"
+  local interactive="auto"
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --ruleset)
         ruleset="true"
+        mode_explicit="true"
         ;;
       --online)
         warn "--online is deprecated; use --ruleset"
         ruleset="true"
+        mode_explicit="true"
         ;;
       --base-url)
         shift
@@ -792,12 +1212,35 @@ cmd_build_rules() {
       --compact)
         compact="true"
         ;;
+      --interactive)
+        interactive="true"
+        ;;
+      --no-interactive)
+        interactive="false"
+        ;;
       *)
         die "unknown flag for build-rules: $1"
         ;;
     esac
     shift
   done
+
+  if [[ "${interactive}" == "auto" ]]; then
+    if [[ "${mode_explicit}" != "true" ]] && fly_can_tui; then
+      interactive="true"
+    else
+      interactive="false"
+    fi
+  fi
+  if is_true "${interactive}"; then
+    fly_tui_choose_rules_mode "${ruleset}" || die "cancelled by user"
+    ruleset="${_FLY_BUILD_RULESET}"
+    if is_true "${ruleset}"; then
+      log "interactive selected: ruleset mode"
+    else
+      log "interactive selected: inline mode"
+    fi
+  fi
 
   if is_true "${ruleset}"; then
     if [[ -z "${base_url}" ]]; then
@@ -859,21 +1302,41 @@ cmd_build_config() {
   load_env
   need_cmd "${PYTHON_BIN}"
   local ruleset="false"
+  local ruleset_explicit="false"
   local target="desktop"
+  local target_explicit="false"
+  local profile="${DESKTOP_PROFILE_DEFAULT}"
+  local profile_explicit="false"
   local compact="false"
+  local interactive="auto"
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --ruleset)
         ruleset="true"
+        ruleset_explicit="true"
         ;;
       --online)
         warn "--online is deprecated; use --ruleset"
         ruleset="true"
+        ruleset_explicit="true"
         ;;
       --target)
         shift
         [[ $# -gt 0 ]] || die "missing value for --target"
         target="$1"
+        target_explicit="true"
+        ;;
+      --profile)
+        shift
+        [[ $# -gt 0 ]] || die "missing value for --profile"
+        profile="$1"
+        profile_explicit="true"
+        ;;
+      --interactive)
+        interactive="true"
+        ;;
+      --no-interactive)
+        interactive="false"
         ;;
       --compact)
         compact="true"
@@ -885,7 +1348,26 @@ cmd_build_config() {
     shift
   done
 
+  if [[ "${interactive}" == "auto" ]]; then
+    if [[ "${target_explicit}" != "true" && "${ruleset_explicit}" != "true" && "${profile_explicit}" != "true" ]] && fly_can_tui; then
+      interactive="true"
+    else
+      interactive="false"
+    fi
+  fi
+  if is_true "${interactive}"; then
+    fly_tui_choose_build_mode "${target}" "${ruleset}" "${profile}" || die "cancelled by user"
+    target="${_FLY_BUILD_TARGET}"
+    ruleset="${_FLY_BUILD_RULESET}"
+    profile="${_FLY_BUILD_PROFILE}"
+    log "interactive selected: target=${target}, ruleset=${ruleset}, profile=${profile}"
+  fi
+
   [[ "${target}" =~ ^(desktop|ios)$ ]] || die "unsupported --target: ${target} (use desktop|ios)"
+  [[ "${profile}" =~ ^(vt|terminal)$ ]] || die "unsupported --profile: ${profile} (use vt|terminal)"
+  if [[ "${target}" == "ios" ]]; then
+    profile="vt"
+  fi
 
   local rules_file="${ROUTE_RULES_FILE}"
   if is_true "${ruleset}"; then
@@ -896,6 +1378,9 @@ cmd_build_config() {
   if [[ "${target}" == "ios" ]]; then
     template_file="${BASE_TEMPLATE_FILE_IOS}"
     output_file="${CONFIG_JSON_IOS}"
+  elif [[ "${profile}" == "terminal" ]]; then
+    template_file="${BASE_TEMPLATE_FILE_TERMINAL}"
+    output_file="${CONFIG_JSON_TERMINAL}"
   fi
 
   [[ -f "${NODES_FILE}" ]] || die "missing nodes file: ${NODES_FILE} (run ./fly extract first)"
@@ -911,6 +1396,7 @@ cmd_build_config() {
     --template-file "${template_file}"
     --output-file "${output_file}"
     --target "${target}"
+    --compat-profile "${profile}"
   )
   if is_true "${compact}"; then
     cmd+=(--compact)
@@ -1018,22 +1504,43 @@ cmd_publish_ruleset() {
 }
 
 cmd_pipeline() {
+  load_env
   local ruleset="false"
+  local ruleset_explicit="false"
   local target="desktop"
+  local target_explicit="false"
+  local profile="${DESKTOP_PROFILE_DEFAULT}"
+  local profile_explicit="false"
   local compact="false"
+  local interactive="auto"
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --ruleset)
         ruleset="true"
+        ruleset_explicit="true"
         ;;
       --online)
         warn "--online is deprecated; use --ruleset"
         ruleset="true"
+        ruleset_explicit="true"
         ;;
       --target)
         shift
         [[ $# -gt 0 ]] || die "missing value for --target"
         target="$1"
+        target_explicit="true"
+        ;;
+      --profile)
+        shift
+        [[ $# -gt 0 ]] || die "missing value for --profile"
+        profile="$1"
+        profile_explicit="true"
+        ;;
+      --interactive)
+        interactive="true"
+        ;;
+      --no-interactive)
+        interactive="false"
         ;;
       --compact)
         compact="true"
@@ -1045,27 +1552,137 @@ cmd_pipeline() {
     shift
   done
 
+  if [[ "${interactive}" == "auto" ]]; then
+    if [[ "${target_explicit}" != "true" && "${ruleset_explicit}" != "true" && "${profile_explicit}" != "true" ]] && fly_can_tui; then
+      interactive="true"
+    else
+      interactive="false"
+    fi
+  fi
+  if is_true "${interactive}"; then
+    fly_tui_choose_build_mode "${target}" "${ruleset}" "${profile}" || die "cancelled by user"
+    target="${_FLY_BUILD_TARGET}"
+    ruleset="${_FLY_BUILD_RULESET}"
+    profile="${_FLY_BUILD_PROFILE}"
+    log "interactive selected: target=${target}, ruleset=${ruleset}, profile=${profile}"
+  fi
+
   cmd_extract
   if is_true "${ruleset}"; then
     if is_true "${compact}"; then
       cmd_build_rules --ruleset --compact
-      cmd_build_config --ruleset --target "${target}" --compact
+      cmd_build_config --ruleset --target "${target}" --profile "${profile}" --compact
     else
       cmd_build_rules --ruleset
-      cmd_build_config --ruleset --target "${target}"
+      cmd_build_config --ruleset --target "${target}" --profile "${profile}"
     fi
   else
     if is_true "${compact}"; then
-      cmd_build_config --target "${target}" --compact
+      cmd_build_config --target "${target}" --profile "${profile}" --compact
     else
-      cmd_build_config --target "${target}"
+      cmd_build_config --target "${target}" --profile "${profile}"
     fi
   fi
 }
 
+_fly_wait_continue() {
+  if [[ -t 0 ]]; then
+    printf '\n按任意键返回菜单...'
+    IFS= read -rsn1 _fly_dummy 2>/dev/null || true
+  fi
+}
+
+cmd_interactive() {
+  if ! fly_can_tui; then
+    die "interactive menu requires a TTY terminal"
+  fi
+
+  while true; do
+    _fly_tui_title "fly 配置工作台"
+    _fly_tui_option "1" "提取节点 (extract)" "输出 build/nodes.json"
+    _fly_tui_option "2" "生成规则 (build-rules)" "继续交互选择 Rule Set/inline"
+    _fly_tui_option "3" "构建配置 (build-config)" "继续交互选择平台/Rule Set/兼容档位"
+    _fly_tui_option "4" "一键流水线 (pipeline)" "extract + build-rules/build-config"
+    _fly_tui_prompt "选择操作"
+    local selected="${_FLY_TUI_RESULT}"
+    [[ "${selected}" == "q" ]] && return 0
+
+    case "${selected}" in
+      1)
+        cmd_extract || true
+        ;;
+      2)
+        cmd_build_rules --interactive || true
+        ;;
+      3)
+        cmd_build_config --interactive || true
+        ;;
+      4)
+        cmd_pipeline --interactive || true
+        ;;
+    esac
+    _fly_wait_continue
+  done
+}
+
 cmd_on() {
   load_env
-  [[ -f "${CONFIG_JSON}" ]] || die "missing ${CONFIG_JSON}; run ./fly build-config first"
+  local config_file="${CONFIG_JSON}"
+  local config_explicit="false"
+  local interactive="auto"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --config)
+        shift
+        [[ $# -gt 0 ]] || die "missing value for --config"
+        config_file="$1"
+        config_explicit="true"
+        ;;
+      --interactive)
+        interactive="true"
+        ;;
+      --no-interactive)
+        interactive="false"
+        ;;
+      *)
+        if [[ "$1" == -* ]]; then
+          die "unknown flag for on: $1"
+        fi
+        if [[ "${config_explicit}" == "true" ]]; then
+          die "multiple config paths specified for on"
+        fi
+        config_file="$1"
+        config_explicit="true"
+        ;;
+    esac
+    shift
+  done
+
+  if [[ "${interactive}" == "auto" ]]; then
+    if fly_can_tui && [[ "${config_explicit}" != "true" ]]; then
+      interactive="true"
+    else
+      interactive="false"
+    fi
+  fi
+  if is_true "${interactive}"; then
+    if fly_tui_choose_on_config "${CONFIG_OUTPUT_DIR}"; then
+      config_file="${_FLY_ON_CONFIG_RESULT}"
+      log "interactive selected config -> ${config_file}"
+    else
+      die "no selectable *.json in ${CONFIG_OUTPUT_DIR} (or cancelled by user)"
+    fi
+  fi
+
+  if [[ "${config_file}" != /* ]]; then
+    local raw_config="${config_file#./}"
+    if [[ "${raw_config}" != */* ]] && [[ -f "${CONFIG_OUTPUT_DIR}/${raw_config}" ]]; then
+      config_file="${CONFIG_OUTPUT_DIR}/${raw_config}"
+    else
+      config_file="$(pwd)/${raw_config}"
+    fi
+  fi
+  [[ -f "${config_file}" ]] || die "missing config file: ${config_file}"
   need_cmd nohup
   need_cmd "${SING_BOX_BIN}"
 
@@ -1080,7 +1697,7 @@ cmd_on() {
 
   local start_cmd
   printf -v start_cmd 'nohup %q run -c %q > %q 2>&1 & echo $! > %q' \
-    "${SING_BOX_BIN}" "${CONFIG_JSON}" "${LOG_FILE}" "${PID_FILE}"
+    "${SING_BOX_BIN}" "${config_file}" "${LOG_FILE}" "${PID_FILE}"
 
   if [[ -n "${SUDO_BIN}" ]]; then
     "${SUDO_BIN}" sh -c "${start_cmd}"
@@ -1096,7 +1713,10 @@ cmd_on() {
     die "process failed to start (pid=${new_pid}); check ${LOG_FILE}"
   fi
   stdout_line "${COLOR_GREEN}" "started (pid: ${new_pid})"
+  stdout_line "${COLOR_CYAN}" "config: ${config_file}"
   stdout_line "${COLOR_CYAN}" "log: ${LOG_FILE}"
+
+  macos_dns_guard_apply_if_needed "${config_file}"
 }
 
 cmd_off() {
@@ -1132,6 +1752,8 @@ cmd_off() {
   else
     stdout_line "${COLOR_YELLOW}" "not running"
   fi
+
+  macos_dns_guard_restore_if_needed
 }
 
 cmd_status() {
@@ -1554,6 +2176,7 @@ main() {
     extract) cmd_extract "$@" ;;
     build-config) cmd_build_config "$@" ;;
     pipeline) cmd_pipeline "$@" ;;
+    interactive|menu) cmd_interactive "$@" ;;
     on) cmd_on "$@" ;;
     off) cmd_off "$@" ;;
     status) cmd_status "$@" ;;

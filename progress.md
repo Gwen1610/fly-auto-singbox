@@ -100,10 +100,55 @@
 - [x] 调研 Bash TUI 技术方案（纯 Bash `read -t`、fzf、gum、Python textual 横向对比）
 - [x] 更新 `findings.md`：新增 sing-box API + TUI 调研结论
 - [x] 更新 `task_plan.md`：新增 Phase 19-22（API 基础设施、select、delay、monitor）
-- [ ] 等待用户确认方向后开始实现
+- [x] 进入实现阶段并完成交互命令首版（`select/delay/monitor`）
+
+## Session 2026-02-27 (配置生成交互化 + 终端档位)
+- [x] 对齐 Claude 已落地的交互模式与命令面（`./fly help`、`README.md`、`CLAUDE.md`）。
+- [x] 增加构建交互向导：`build-config --interactive` / `pipeline --interactive`（第一层 iOS/电脑端，第二层 Rule Set，有桌面第三层 VT/terminal）。
+- [x] 增加 `build-rules --interactive`（Rule Set / inline 二选一）。
+- [x] 新增桌面 profile 参数：`--profile vt|terminal`，默认 `vt`，并新增 `DESKTOP_PROFILE_DEFAULT`。
+- [x] 新增终端配置输出：`config.terminal.json`（`--profile terminal`）。
+- [x] `build_config.py` 新增 terminal profile：
+  - DNS 使用 1.12+ 新 server 格式；
+  - 去掉 deprecated 的 `dns.rules[].outbound=any`；
+  - 最初设置 `route.default_domain_resolver=default-dns`（后续已收敛为 per-outbound `domain_resolver`）。
+- [x] 更新 `config_template/fly.env.example`、`README.md`、`CLAUDE.md`、`task_plan.md`、`findings.md`。
+- [x] 验证通过：
+  - `bash -n fly`
+  - `conda run -n yellow python -m py_compile scripts/build_config.py scripts/build_route_rules.py scripts/extract_nodes.py`
+  - `bash tests/test_pipeline.sh`
+
+## Session 2026-02-27 (fly on 交互启动 + terminal fatal 修复)
+- [x] `fly on` 增加交互选配置（扫描当前目录 `*.json`），并支持 `--config` 显式指定。
+- [x] 修复 terminal profile 启动 fatal（移除 direct-type DNS detour）。
+- [x] terminal profile 的 `clash_mode=direct` 对齐回 `default-dns`，避免落回 `system-dns` 造成 DNS 行为偏移。
+- [x] 新增统一入口 `fly interactive` / `fly menu`，可在单界面选择提取节点/生成规则/构建配置/一键流水线。
+- [x] 终端 profile 保持原有能力：分层分组、route 注入、CN 规则联动不变。
+- [x] README / CLAUDE.md 补充 `fly on` 交互与 `--config` 用法。
+- [x] 补充测试断言：terminal profile 不再输出 direct detour，且保留关键 route 规则。
 
 ## Session 2026-02-23 (bulianglin 配置借鉴分析，文档先行)
 - [x] 阅读用户提供的 `example/config.json` 与 `example/tun.json`，提取 DNS 防泄露相关逻辑。
 - [x] 尝试读取原教程页面，确认被 Cloudflare 验证拦截（无法自动抓正文）。
 - [x] 对照当前 VT 1.11.4 兼容生成配置，归纳“已做到 / 可借鉴 / 不建议照搬”的点。
 - [x] 新增文档 `docs/bulianglin-dns-leak-borrowing-notes.md`（仅方案思路，不改代码）。
+
+## Session 2026-02-27 (配置目录统一 + terminal DNS 防泄露对齐)
+- [x] `fly` 默认输出目录切换到 `CONFIG_OUTPUT_DIR=./runtime-configs`，并派生 `CONFIG_JSON/IOS/TERMINAL`。
+- [x] `fly on` 交互选择改为扫描 `runtime-configs/*.json`（可选自定义文件名）。
+- [x] `fly on --config <basename>` 支持优先从 `runtime-configs/` 解析（无需写完整路径）。
+- [x] terminal profile DNS 对齐 VT 防泄露语义：`google` server 明确 `detour=Proxy`。
+- [x] terminal profile 从全局 `route.default_domain_resolver` 调整为按出站注入 `domain_resolver`（减少行为偏移）。
+- [x] 更新文档：`README.md`、`CLAUDE.md`、`docs/claude-code-handoff.md`、`config_template/fly.env.example`。
+- [x] 验证通过：
+  - `bash -n fly`
+  - `conda run -n yellow python -m py_compile scripts/build_config.py scripts/build_route_rules.py scripts/extract_nodes.py`
+  - `bash tests/test_pipeline.sh`
+  - `./fly build-config --target desktop --profile terminal --ruleset`
+
+## Session 2026-02-27 (terminal DNS 泄露加固：macOS guard + proxy-mode 解析)
+- [x] macOS DNS guard：选择“当前有 IP 的网络服务”，并同时设置 IPv4/IPv6 公网 DNS，避免 VPN 启动后接口/IPv6 resolver 导致的泄露与不生效。
+- [x] macOS DNS guard：应用/恢复后 flush DNS cache（`dscacheutil` + `mDNSResponder`）。
+- [x] terminal profile：注入 `mixed-in` 的 `route.rules[].action=resolve`，代理模式下 DNS 统一走 sing-box DNS 路由。
+- [x] terminal profile：tun 入站默认 `sniff_override_destination=false`（减少额外“域名覆盖”触发的解析链路）。
+- [x] 更新 `tests/test_pipeline.sh` 覆盖上述行为。

@@ -14,6 +14,10 @@
   - `a029533`：新增交互命令 `fly select / fly delay / fly monitor`
   - `2f4c39f`：修复交互命令未加载 `fly.env` 的变量错误
   - `6ebf589`：修复 `fly_api` 子 shell 场景下状态码丢失
+  - （working tree）新增构建交互向导：`build-rules/build-config/pipeline --interactive`
+  - （working tree）新增桌面配置档位：`--profile vt|terminal` + `runtime-configs/config.terminal.json`
+  - （working tree）`fly on` 支持交互选择 `CONFIG_OUTPUT_DIR`（默认 `runtime-configs/`）内配置文件（或 `--config` 显式指定）
+  - （working tree）新增统一入口：`./fly interactive`（提取/规则/构建/流水线）
   - `8de7388`：默认生成 VT `1.11.4` 可用配置
   - `5c0e3da`：切到 Bulianglin 风格 DNS 模式
   - `1342e80`：补充 CN DNS / route 联动
@@ -43,9 +47,10 @@
 - `scripts/build_config.py`
   - 把节点与路由规则注入模板
   - 生成：
-    - 桌面：`config.json`
-    - iOS：`config.ios.json`
-  - 内含 VT 1.11.4 兼容分支（DNS / route 注入差异）
+    - 桌面：`runtime-configs/config.json`
+    - 桌面（终端）：`runtime-configs/config.terminal.json`
+    - iOS：`runtime-configs/config.ios.json`
+  - 内含 VT 1.11.4 与 terminal 1.12+ 双兼容分支（DNS / route 注入差异）
 
 ### 3.3 运行时配置（本地可编辑）
 
@@ -94,13 +99,21 @@
 4. 再按目标端单独构建：
    - `./fly build-config`
    - `./fly build-config --target ios`
+   - `./fly build-config --target desktop --profile terminal`
 5. 如涉及 ruleset 流程，再补：
    - `./fly build-rules --ruleset`
    - `./fly build-config --ruleset`
-6. 运行态交互能力可单独验证：
+6. 若需交互式构建：
+   - `./fly build-rules --interactive`
+   - `./fly build-config --interactive`
+   - `./fly pipeline --interactive`
+7. 运行态交互能力可单独验证：
    - `./fly select`
    - `./fly delay`
    - `./fly monitor`
+8. 启动时可选配置文件：
+   - `./fly on`（TTY 下交互选 `runtime-configs/*.json`）
+   - `./fly on --config config.terminal.json`
 
 ---
 

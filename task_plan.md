@@ -8,7 +8,7 @@
 4. 基础能力：在 `config/base-template.json` 中注入 `experimental.clash_api` 配置。
 
 ## Current Phase
-Phase 19（计划阶段）
+Complete (Phase 25)
 
 ## Previous Goal（已完成，Phase 1-17）
 三段解耦 Pipeline + 自动安装 + 内置订阅提取器 + 分层分组 + 连通性默认注入
@@ -304,6 +304,90 @@ $ ./fly delay
 - [ ] 终端尺寸适配（`tput cols/lines` 动态布局）
 - [ ] 更新 README
 - **Status:** pending
+
+---
+
+## Phase 19-22 状态对齐（Claude 交互升级已完成）
+
+- [x] Clash API 基础设施（`experimental.clash_api` + `fly_api`）已落地
+- [x] `fly select / fly delay / fly monitor` 已落地并进入主命令帮助
+- [x] 相关 README / CLAUDE.md 已补齐交互命令说明
+- [x] 关键修复已合入（`load_env` 变量读取、`fly_api` 子 shell 状态码）
+- **Status:** complete
+
+---
+
+## Phase 23: 配置生成/规则构建交互化 + 终端内核兼容档位
+
+**目标：** 复用现有 Tide 风格 TUI，把 `build-rules` 和 `build-config/pipeline` 做成交互式，并新增桌面端 `terminal` 兼容配置档位（面向终端 sing-box 1.12+，减少 legacy 告警）。
+
+### 任务列表
+
+- [x] 设计交互路径：第一层 iOS/电脑端，第二层 Rule Set/无 Rule Set，第三层（电脑端）VT/terminal
+- [x] 在 `fly` 中实现 `build-rules --interactive` 与 `build-config/pipeline --interactive`
+- [x] 新增 `--profile vt|terminal` 参数与 `DESKTOP_PROFILE_DEFAULT` 默认值
+- [x] 新增终端输出文件路径：`config.terminal.json`
+- [x] 在 `build_config.py` 增加 terminal profile（新 DNS server 格式 + resolver 迁移；后续收敛为 per-outbound `domain_resolver`）
+- [x] 更新 README / CLAUDE.md / `config_template/fly.env.example`
+- [x] 更新并通过 `tests/test_pipeline.sh`（覆盖 terminal profile 断言）
+- **Status:** complete
+
+---
+
+## Phase 24: `fly on` 交互选配置 + 终端启动 fatal 修复
+
+**目标：**
+1) `fly on` 支持交互选择当前目录配置文件；  
+2) 修复 terminal profile 在 1.12+ 的 `detour to an empty direct outbound makes no sense` 启动 fatal；  
+3) 保持原有分组/分流/连通性逻辑不回退。
+
+### 任务列表
+
+- [x] 为 `fly on` 增加 `--config` / `--interactive` 参数，并默认在 TTY 下弹出配置选择
+- [x] 交互菜单支持扫描当前目录 `*.json` 并选择启动文件
+- [x] 修复 terminal profile 的 DNS detour 逻辑，避免 direct-detour fatal
+- [x] 修正 terminal profile 的 DNS 规则对齐 VT 逻辑（`clash_mode=direct -> default-dns`）
+- [x] 新增统一配置交互入口 `fly interactive/menu`（提取节点/生成规则/构建配置/一键流水线）
+- [x] 增补测试断言（terminal profile 保留原有规则能力 + 无 direct detour fatal 配置形态）
+- [x] 更新 README / CLAUDE.md / 进度文档说明
+- **Status:** complete
+
+---
+
+## Phase 25: 统一配置输出目录 + 终端 DNS 防泄露对齐
+
+**目标：**
+1) 所有最终 `config*.json` 默认输出到统一目录（`runtime-configs/`）；  
+2) `fly on` 只要目标文件在该目录就可被交互选择/通过 `--config` 简写名启动；  
+3) terminal profile 的 DNS 行为对齐 VT 防泄露策略（仅做新内核兼容字段迁移，不退化逻辑）。
+
+### 任务列表
+
+- [x] 在 `fly` 中引入 `CONFIG_OUTPUT_DIR` 默认值（`./runtime-configs`）并派生 `CONFIG_JSON/IOS/TERMINAL`
+- [x] `fly on` 交互改为扫描 `CONFIG_OUTPUT_DIR`，支持自定义命名 JSON
+- [x] `fly on --config <basename>` 支持优先从 `CONFIG_OUTPUT_DIR` 解析
+- [x] terminal DNS 配置补齐 `google` server `detour=Proxy`，保持 VT 的远程 DoH 路由意图
+- [x] 更新 `config_template/fly.env.example`、`README.md`、`CLAUDE.md`、`docs/claude-code-handoff.md`
+- [x] 更新并通过 `tests/test_pipeline.sh`（覆盖 `runtime-configs` 路径与 `google detour=Proxy` 断言）
+- **Status:** complete
+
+---
+
+## Phase 26: terminal DNS 泄露加固（macOS guard + proxy-mode 解析）
+
+**目标：**
+1) 解决“终端模式仍有 DNS 泄露”的常见 macOS 场景（IPv6 resolver、VPN 启动后网络服务映射失败等）；  
+2) 代理模式（`mixed-in`）下避免走系统 DNS；  
+3) 保持 VT 档逻辑不回退，terminal 档继续无 deprecated warn。
+
+### 任务列表
+
+- [x] macOS DNS guard：选择“当前有 IP 的网络服务”（避免接口被 `utun*` 干扰导致映射失败）
+- [x] macOS DNS guard：同时设置 IPv4/IPv6 公网 DNS，并在应用/恢复后 flush DNS cache
+- [x] terminal profile：为 `mixed-in` 注入 `route.rules[].action=resolve`（代理模式 DNS 统一走 sing-box）
+- [x] terminal profile：tun 入站默认 `sniff_override_destination=false`（减少额外解析链路）
+- [x] 更新并通过 `tests/test_pipeline.sh`（新增断言覆盖）
+- **Status:** complete
 
 ---
 

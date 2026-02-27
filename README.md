@@ -138,6 +138,12 @@ sing-box version
 ./fly build-rules
 ```
 
+如果你想用交互方式选择是否启用 Rule Set（数字键选择）：
+
+```bash
+./fly build-rules --interactive
+```
+
 如果你希望在 iOS/VT 等客户端避免“内联大规则导致 config.json 过大/启动失败”，可以选择把 QX 规则**编译成 sing-box rule-set（.srs）并在配置里引用 URL**（生成一个更小的 ruleset 规则文件 `config/route-rules.ruleset.json`）：
 
 ```bash
@@ -150,8 +156,8 @@ sing-box version
 ./fly publish-ruleset
 
 # 4) 再生成最终配置：
-#    - 电脑端：config.json
-#    - iOS 端：config.ios.json
+#    - 电脑端：runtime-configs/config.json
+#    - iOS 端：runtime-configs/config.ios.json
 ./fly build-config --ruleset
 ./fly build-config --target ios --ruleset
 ```
@@ -178,7 +184,7 @@ sing-box version
 说明：
 
 - 这是独立模块，只负责转换规则并生成 `route-rules.json`。
-- 不会修改 `build/nodes.json` 和 `config.json`。
+- 不会修改 `build/nodes.json` 和 `runtime-configs/config.json`。
 - 你也可以不使用它，继续手动编辑 `config/route-rules.json`。
 - `manual_rules` 支持直接写 QX 风格单行规则（`类型, 值, 出口`）。
 - 出口名支持别名：`Direct -> direct`、`Reject -> block`（会自动规范化）。
@@ -210,6 +216,18 @@ sing-box version
 ./fly build-config
 ```
 
+现在也支持交互向导（推荐）：
+
+```bash
+./fly build-config --interactive
+```
+
+交互顺序：
+
+1. 第一层：`iOS` / `电脑端`
+2. 第二层：`有 Rule Set` / `无 Rule Set`
+3. （仅电脑端）第三层：`VT 客户端兼容（1.11.4）` / `终端内核兼容（1.12+）`
+
 如果你使用了 ruleset 规则（`./fly build-rules --ruleset`），则运行：
 
 ```bash
@@ -222,6 +240,16 @@ sing-box version
 ./fly build-config --target ios
 ./fly build-config --target ios --ruleset
 ```
+
+如果你想生成“终端 sing-box 1.12+ 更少告警”的电脑端配置：
+
+```bash
+./fly build-config --target desktop --profile terminal
+./fly build-config --target desktop --profile terminal --ruleset
+```
+
+说明：`terminal` profile 只调整“内核兼容相关字段”（DNS server 新格式、按出站注入 `domain_resolver`、去除 deprecated 的 DNS outbound 规则写法），不会移除你现有的分组、分流、连通性默认规则逻辑。
+同时保持与 VT 档一致的防泄露逻辑方向：`clash_mode=direct` 仍走 `default-dns`（不会退回 `system-dns`）。
 
 输入规则文件：
 
@@ -236,7 +264,7 @@ sing-box version
 
 你要加分流时，只改 `config/route-rules.json` 即可。
 
-另外，`build-config` 会为“实际可用性”注入一些默认行为（无需你手改 `config.json`）：
+另外，`build-config` 会为“实际可用性”注入一些默认行为（无需你手改 `runtime-configs/config*.json`）：
 
 - 为 `tun`/`mixed` 入站开启 `sniff` 与 `sniff_override_destination`（改善按域名/协议识别体验）。
 - 在 `route.rules` 前置注入 `hijack-dns`（接管系统 DNS）、QUIC `reject`（`protocol=quic` / `udp:443`）、以及 `ip_is_private -> direct`。
@@ -244,15 +272,30 @@ sing-box version
 
 > 注：以上“默认注入”以 `--target desktop` 为准；`--target ios` 会使用更保守的注入策略（更贴近 VT `1.11.4` 的兼容性需求）。
 
-输出文件：
+输出文件（默认都在 `runtime-configs/`）：
 
-- `config.json`
-- `config.ios.json`（`--target ios`）
+- `runtime-configs/config.json`（电脑端 + `--profile vt`，默认，兼容 VT 1.11.4）
+- `runtime-configs/config.terminal.json`（电脑端 + `--profile terminal`，适配终端 1.12+）
+- `runtime-configs/config.ios.json`（`--target ios`）
 
 也可以一步跑完提取+构建：
 
 ```bash
 ./fly pipeline
+```
+
+如果你想一步走交互向导（平台 + ruleset + 桌面兼容档位）：
+
+```bash
+./fly pipeline --interactive
+```
+
+如果你希望把“提取节点 / 生成规则 / 构建配置”都放在同一个交互入口里：
+
+```bash
+./fly interactive
+# 或
+./fly menu
 ```
 
 如果你想一步生成 ruleset 规则 + ruleset 配置：
@@ -323,6 +366,24 @@ sing-box version
 ./fly on
 ```
 
+`./fly on` 现在在交互终端下会弹出配置选择菜单（扫描 `CONFIG_OUTPUT_DIR`，默认 `runtime-configs/` 下的 `*.json`），可直接选择运行 `config.json` / `config.terminal.json` / `config.ios.json`，也支持你自定义命名的 JSON 文件。
+
+也可以显式指定配置（脚本场景推荐）：
+
+```bash
+./fly on --config config.json
+./fly on --config config.terminal.json
+./fly on --config config.ios.json
+# 也支持自定义文件名（位于 runtime-configs/）
+./fly on --config my-work.json
+```
+
+macOS 说明（终端 tun 模式 DNS 泄露）：
+
+- 当 `MACOS_DNS_GUARD=true`（默认）且启动的配置包含 `tun` 入站时，`./fly on` 会临时把系统 DNS 设为 `223.5.5.5/223.6.6.6/2400:3200::1/2400:3200:baba::1`，并在 `./fly off` 时自动恢复。
+- 目的：避免常见的“系统 DNS 来自路由器/LAN 私网地址，导致 DNS 查询绕过 tun”导致的 DNS 泄露。
+- 如不希望脚本改系统 DNS：在 `config/fly.env` 设置 `MACOS_DNS_GUARD="false"`。
+
 停止：
 
 ```bash
@@ -353,11 +414,12 @@ sing-box version
 ## 11. 配置文件作用
 
 - `config/base-template.json`
-  - `build-config` 的主模板，定义 inbounds/dns/route 的基础骨架。
-  - `build-config` 会在此基础上补齐 outbounds，并注入部分“连通性默认行为”（见上文第 8 节）。
+  - 电脑端主模板，定义 inbounds/dns/route 的基础骨架。
+  - `build-config --target desktop --profile vt`（默认）和 `--profile terminal` 都以它为基础注入。
+  - 默认输出分别是 `runtime-configs/config.json`（vt）与 `runtime-configs/config.terminal.json`（terminal）。
 - `config/base-template.ios.json`
   - iOS 端（VT `1.11.4`）更偏兼容的主模板（legacy DNS servers/address + 更保守的默认注入）。
-  - 用法：`./fly build-config --target ios`（默认输出 `config.ios.json`）。
+  - 用法：`./fly build-config --target ios`（默认输出 `runtime-configs/config.ios.json`）。
 - `config_template/base-template.vt.legacy.example.json`
   - 旧写法（legacy DNS servers/address）的参考骨架，适合在某些客户端/旧核心下做兼容测试。
   - 用法：复制到 `config/` 后，在 `config/fly.env` 把 `BASE_TEMPLATE_FILE` 指向该文件再运行 `./fly build-config`。

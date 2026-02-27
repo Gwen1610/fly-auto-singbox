@@ -18,21 +18,30 @@ python3 -m pip install -r requirements.txt
 # 主流水线（按顺序执行）
 ./fly extract                          # 从订阅提取节点 -> build/nodes.json
 ./fly build-rules                      # QX/Clash 规则转换 -> config/route-rules.json
-./fly build-config                     # 生成桌面配置 -> config.json
-./fly build-config --target ios        # 生成 iOS 配置 -> config.ios.json
+./fly build-config                     # 生成桌面配置 -> runtime-configs/config.json
+./fly build-config --target ios        # 生成 iOS 配置 -> runtime-configs/config.ios.json
+./fly build-config --target desktop --profile terminal  # 生成终端 1.12+ 配置 -> runtime-configs/config.terminal.json
 
 # Ruleset 模式（生成远端引用的小体积配置）
 ./fly build-rules --ruleset --base-url "https://raw.githubusercontent.com/<user>/<repo>/main/ruleset"
 ./fly publish-ruleset                  # 提交 ruleset/*.srs 到 Git
 ./fly build-config --ruleset           # 生成引用 ruleset 的桌面配置
 ./fly build-config --target ios --ruleset  # iOS + ruleset
+./fly build-config --target desktop --profile terminal --ruleset  # 终端 + ruleset
+
+# 交互模式（数字键选择）
+./fly build-rules --interactive
+./fly build-config --interactive
+./fly pipeline --interactive
 
 # 一步完成提取+构建
 ./fly pipeline
 ./fly pipeline --target ios --ruleset
+./fly interactive                         # 统一交互入口（提取/规则/构建）
 
 # 运行管理
 ./fly on / ./fly off / ./fly status / ./fly log
+./fly on --config config.terminal.json     # 显式指定启动配置（从 runtime-configs/ 解析）
 
 # sing-box 安装
 ./fly check-singbox
@@ -63,7 +72,7 @@ bash tests/test_pipeline.sh
         config/base-template.json (桌面)
         config/base-template.ios.json (iOS)
         config/group-strategy.json
-   └─> scripts/build_config.py        -> config.json / config.ios.json
+   └─> scripts/build_config.py        -> runtime-configs/config.json / runtime-configs/config.terminal.json / runtime-configs/config.ios.json
 ```
 
 ### build_config.py 的注入逻辑
@@ -91,7 +100,12 @@ bash tests/test_pipeline.sh
 - 只保留 `tun` inbound（不含 `mixed`）
 - 更保守的 DNS / route 注入
 
-桌面端同样使用 legacy DNS `address` 格式（无 `type` 字段），以兼容 VT 1.11.4。
+桌面端支持两种 profile：
+- `--profile vt`：legacy DNS `address` 格式，兼容 VT 1.11.4（默认，输出 `runtime-configs/config.json`）
+- `--profile terminal`：1.12+ 新 DNS server 格式 + 按出站注入 `domain_resolver`（减少终端告警，输出 `runtime-configs/config.terminal.json`）
+
+`terminal` profile 只改兼容字段（DNS schema / per-outbound resolver / deprecated DNS rule item），不改变分组拓扑、分流规则、连通性默认注入（hijack-dns/QUIC reject/private IP direct）。
+并保持 `clash_mode=direct -> default-dns`，避免退回 `system-dns` 导致行为偏移。
 
 ### 关键约束
 
@@ -112,11 +126,12 @@ bash tests/test_pipeline.sh
 
 ## 配置文件说明
 
-- `config/fly.env`：所有路径与运行参数的环境变量，优先在这里调整
+- `config/fly.env`：所有路径与运行参数的环境变量，优先在这里调整（默认输出目录 `CONFIG_OUTPUT_DIR=./runtime-configs`）
 - `config/base-template.json` / `config/base-template.ios.json`：sing-box 配置骨架（inbounds/dns/route 基础结构）
 - `config/group-strategy.json`：分组结构（地区默认值、业务组、Proxy 成员）
 - `config/route-rules.json`：分流规则（`build-rules` 生成，或手工编辑）
 - `config_template/*.example*`：`./fly init` 的来源模板，不直接参与运行
+- `MACOS_DNS_GUARD`（默认 true）：macOS 下 `./fly on` 启动 tun 配置时临时设置系统 DNS，`./fly off` 自动恢复，用于减少 DNS 泄露
 
 ## 外部参考资料
 
