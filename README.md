@@ -402,7 +402,12 @@ macOS 说明（终端 tun 模式 DNS 泄露）：
 日志：
 
 ```bash
-./fly log
+./fly log  # 交互终端下会先选择显示等级（all/info/warn/error/fatal）
+# 或指定显示等级（仅影响 fly log 输出过滤，不会改写 config 里的 log.level）
+./fly log --level warn
+./fly log --level error --no-follow -n 200
+# 如不希望弹出交互菜单：
+./fly log --no-interactive
 ```
 
 关键运行文件：

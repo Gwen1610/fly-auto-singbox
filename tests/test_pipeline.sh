@@ -740,6 +740,25 @@ fi
 echo "line" >> "./sing-box.log"
 ./fly log --no-follow -n 1 >/dev/null
 
+cat > "./sing-box.log" <<'EOF'
+INFO[0000] hello
+WARN[0001] warn
+ERROR[0002] error
+EOF
+filtered_warn="$(./fly log --no-follow -n 50 --level warn)"
+if ! printf '%s\n' "${filtered_warn}" | grep -q '^WARN\['; then
+  echo "ASSERT FAIL: expected WARN lines in filtered warn output, got '${filtered_warn}'" >&2
+  exit 1
+fi
+if ! printf '%s\n' "${filtered_warn}" | grep -q '^ERROR\['; then
+  echo "ASSERT FAIL: expected ERROR lines in filtered warn output, got '${filtered_warn}'" >&2
+  exit 1
+fi
+if printf '%s\n' "${filtered_warn}" | grep -q '^INFO\['; then
+  echo "ASSERT FAIL: INFO should be filtered out at level=warn, got '${filtered_warn}'" >&2
+  exit 1
+fi
+
 ./fly off
 status_after="$(./fly status)"
 if [[ "${status_after}" != "not running" ]]; then

@@ -125,7 +125,7 @@ Usage:
   ./fly on [--config path] [--interactive]
   ./fly off
   ./fly status
-  ./fly log [-n lines] [--no-follow]
+  ./fly log [-n lines] [--level all|info|warn|error|fatal] [--no-follow] [--interactive]
   ./fly select [group-name]
   ./fly delay [group-name]
   ./fly monitor
@@ -972,6 +972,32 @@ fly_tui_choose_on_config() {
     ((idx++))
   done
   return 1
+}
+
+_FLY_LOG_LEVEL_RESULT="all"
+
+fly_tui_choose_log_level() {
+  local default_level="${1:-all}"
+  _FLY_LOG_LEVEL_RESULT="${default_level}"
+
+  _fly_tui_title "fly log — 选择显示等级"
+  _fly_tui_option "1" "全部" "DEBUG/INFO/WARN/ERROR/FATAL"
+  _fly_tui_option "2" "INFO+" ""
+  _fly_tui_option "3" "WARN+" "更干净"
+  _fly_tui_option "4" "ERROR+" ""
+  _fly_tui_option "5" "FATAL" ""
+  _fly_tui_prompt "选择等级"
+  local selected="${_FLY_TUI_RESULT}"
+  [[ "${selected}" == "q" ]] && return 1
+  case "${selected}" in
+    1) _FLY_LOG_LEVEL_RESULT="all" ;;
+    2) _FLY_LOG_LEVEL_RESULT="info" ;;
+    3) _FLY_LOG_LEVEL_RESULT="warn" ;;
+    4) _FLY_LOG_LEVEL_RESULT="error" ;;
+    5) _FLY_LOG_LEVEL_RESULT="fatal" ;;
+    *) return 1 ;;
+  esac
+  return 0
 }
 
 guess_ruleset_base_url_from_git() {
@@ -1992,10 +2018,42 @@ cmd_status() {
   fi
 }
 
+fly_log_filter_by_level() {
+  local min="${1:-info}"
+  awk -v min="${min}" '
+function rank(l) {
+  if (l == "debug") return 10
+  if (l == "info") return 20
+  if (l == "warn") return 30
+  if (l == "error") return 40
+  if (l == "fatal") return 50
+  return 1000
+}
+BEGIN {
+  min_rank = rank(min)
+  if (min_rank == 1000) min_rank = rank("info")
+}
+{
+  if (match($0, /^(DEBUG|INFO|WARN|ERROR|FATAL)\[/)) {
+    lvl = substr($0, 1, RLENGTH-1)
+    lvl = tolower(lvl)
+    if (rank(lvl) >= min_rank) {
+      print $0
+      fflush()
+    }
+  } else if (min_rank <= rank("info")) {
+    print $0
+    fflush()
+  }
+}'
+}
+
 cmd_log() {
   load_env
   local lines="200"
   local follow="true"
+  local level=""
+  local interactive="auto"
   while [[ $# -gt 0 ]]; do
     case "$1" in
       -n|--lines)
@@ -2003,8 +2061,19 @@ cmd_log() {
         [[ $# -gt 0 ]] || die "missing value for --lines"
         lines="$1"
         ;;
+      --level)
+        shift
+        [[ $# -gt 0 ]] || die "missing value for --level"
+        level="$1"
+        ;;
       --no-follow)
         follow="false"
+        ;;
+      --interactive)
+        interactive="true"
+        ;;
+      --no-interactive)
+        interactive="false"
         ;;
       *)
         die "unknown flag for log: $1"
@@ -2014,10 +2083,44 @@ cmd_log() {
   done
 
   [[ -f "${LOG_FILE}" ]] || die "missing log file: ${LOG_FILE}"
+
+  if [[ "${interactive}" == "auto" ]]; then
+    if fly_can_tui && [[ -z "${level}" ]]; then
+      interactive="true"
+    else
+      interactive="false"
+    fi
+  fi
+
+  if is_true "${interactive}"; then
+    if fly_tui_choose_log_level "warn"; then
+      level="${_FLY_LOG_LEVEL_RESULT}"
+    else
+      return 0
+    fi
+  fi
+
+  if [[ -n "${level}" ]]; then
+    level="$(printf '%s' "${level}" | tr '[:upper:]' '[:lower:]')"
+  fi
+  case "${level}" in
+    ""|all|debug) level="all" ;;
+    info|warn|error|fatal) ;;
+    *) die "invalid --level value: ${level} (expected all|info|warn|error|fatal)" ;;
+  esac
+
   if is_true "${follow}"; then
-    tail -n "${lines}" -f "${LOG_FILE}"
+    if [[ "${level}" == "all" ]]; then
+      tail -n "${lines}" -f "${LOG_FILE}"
+    else
+      tail -n "${lines}" -f "${LOG_FILE}" | fly_log_filter_by_level "${level}" || true
+    fi
   else
-    tail -n "${lines}" "${LOG_FILE}"
+    if [[ "${level}" == "all" ]]; then
+      tail -n "${lines}" "${LOG_FILE}"
+    else
+      tail -n "${lines}" "${LOG_FILE}" | fly_log_filter_by_level "${level}" || true
+    fi
   fi
 }
 
