@@ -380,9 +380,12 @@ sing-box version
 
 macOS 说明（终端 tun 模式 DNS 泄露）：
 
-- 当 `MACOS_DNS_GUARD=true`（默认）且启动的配置包含 `tun` 入站时，`./fly on` 会临时把系统 DNS 设为 `223.5.5.5/223.6.6.6/2400:3200::1/2400:3200:baba::1`，并在 `./fly off` 时自动恢复。
+- 当 `MACOS_DNS_GUARD=true`（默认）且启动的配置包含 `tun` 入站时，`./fly on` 会临时把系统 DNS 指向该配置的 tun 网段内地址（例如 tun 为 `172.19.0.1/30` 时系统 DNS 会被设为 `172.19.0.2`；若存在 IPv6 tun 地址也会同步设置），并在 `./fly off` 时自动恢复。
+- 若系统不接受 IPv6 DNS（或 IPv6 被禁用），会自动回退为 IPv4-only guard。
+- 当 `MACOS_DNS_GUARD_WATCHDOG=true`（默认）时，即便 sing-box 异常退出（崩溃/被杀/关闭终端），也会自动恢复系统 DNS（避免残留）。
 - 目的：避免常见的“系统 DNS 来自路由器/LAN 私网地址，导致 DNS 查询绕过 tun”导致的 DNS 泄露。
-- 如不希望脚本改系统 DNS：在 `config/fly.env` 设置 `MACOS_DNS_GUARD="false"`。
+- 注意：这是一个 fail-closed 策略——当 sing-box 未运行时，系统 DNS 可能会短暂不可用（启动后恢复）。
+- 如不希望脚本改系统 DNS：在 `config/fly.env` 设置 `MACOS_DNS_GUARD="false"`（或仅关闭 watchdog：`MACOS_DNS_GUARD_WATCHDOG="false"`）。
 
 停止：
 

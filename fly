@@ -20,6 +20,7 @@ ROUTE_RULES_FILE_DEFAULT="${CONFIG_DIR}/route-rules.json"
 ROUTE_RULES_EXAMPLE_FILE="${TEMPLATE_DIR}/route-rules.example.json"
 
 MACOS_DNS_GUARD_STATE_FILE="${STATE_DIR}/macos-dns-guard.json"
+MACOS_DNS_GUARD_STATE_TXT_FILE="${STATE_DIR}/macos-dns-guard.state"
 
 COLOR_RESET=$'\033[0m'
 COLOR_BLUE=$'\033[34m'
@@ -235,6 +236,10 @@ is_darwin() {
   [[ "$(uname -s)" == "Darwin" ]]
 }
 
+is_root() {
+  [[ "${EUID:-$(id -u)}" == "0" ]]
+}
+
 config_has_tun_inbound() {
   local config_file="$1"
   [[ -f "${config_file}" ]] || return 1
@@ -247,6 +252,95 @@ cfg = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
 inbounds = cfg.get("inbounds", [])
 has_tun = any(isinstance(item, dict) and item.get("type") == "tun" for item in inbounds)
 raise SystemExit(0 if has_tun else 1)
+PY
+}
+
+config_get_tun_dns_guard_servers() {
+  local config_file="$1"
+  [[ -f "${config_file}" ]] || return 1
+  "${PYTHON_BIN}" - "${config_file}" <<'PY'
+import ipaddress
+import json
+import sys
+from pathlib import Path
+
+
+def pick_neighbor(iface, net):
+    if isinstance(net, ipaddress.IPv4Network):
+        if net.prefixlen == 32:
+            return None
+        if net.prefixlen == 31:
+            # RFC 3021: both addresses are usable.
+            return net.broadcast_address if iface == net.network_address else net.network_address
+
+        first_host = ipaddress.IPv4Address(int(net.network_address) + 1)
+        last_host = ipaddress.IPv4Address(int(net.broadcast_address) - 1)
+        if iface != first_host:
+            return first_host
+        if iface != last_host:
+            return last_host
+        return None
+
+    if isinstance(net, ipaddress.IPv6Network):
+        if net.prefixlen == 128:
+            return None
+        base = net.network_address
+        for offset in (1, 2):
+            candidate = ipaddress.IPv6Address(int(base) + offset)
+            if candidate != iface and candidate in net:
+                return candidate
+        for offset in (1, -1):
+            candidate = ipaddress.IPv6Address(int(iface) + offset)
+            if candidate != iface and candidate in net:
+                return candidate
+        return None
+
+    return None
+
+
+cfg = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+inbounds = cfg.get("inbounds", [])
+tun = None
+for item in inbounds:
+    if isinstance(item, dict) and item.get("type") == "tun":
+        tun = item
+        break
+
+if not tun:
+    raise SystemExit(1)
+
+raw_addrs = []
+addr_list = tun.get("address")
+if isinstance(addr_list, list):
+    raw_addrs.extend([a for a in addr_list if isinstance(a, str)])
+for key in ("inet4_address", "inet6_address"):
+    val = tun.get(key)
+    if isinstance(val, list):
+        raw_addrs.extend([a for a in val if isinstance(a, str)])
+
+v4 = None
+v6 = None
+for cidr in raw_addrs:
+    if v4 and v6:
+        break
+    try:
+        interface = ipaddress.ip_interface(cidr)
+    except Exception:
+        continue
+    ip = interface.ip
+    net = interface.network
+    neighbor = pick_neighbor(ip, net)
+    if not neighbor:
+        continue
+    if isinstance(ip, ipaddress.IPv4Address) and v4 is None:
+        v4 = str(neighbor)
+    elif isinstance(ip, ipaddress.IPv6Address) and v6 is None:
+        v6 = str(neighbor)
+
+out = [s for s in (v4, v6) if s]
+for s in out:
+    print(s)
+raise SystemExit(0 if out else 1)
 PY
 }
 
@@ -336,6 +430,16 @@ print(
     )
 )
 PY
+
+  # Also write a plain text version for watchdog restore (no Python needed).
+  {
+    printf '%s\n' "${service}"
+    printf '%s\n' "${mode}"
+    local s
+    for s in "$@"; do
+      printf '%s\n' "${s}"
+    done
+  } > "${MACOS_DNS_GUARD_STATE_TXT_FILE}"
 }
 
 macos_dns_guard_apply_if_needed() {
@@ -344,15 +448,17 @@ macos_dns_guard_apply_if_needed() {
   is_true "${MACOS_DNS_GUARD}" || return 0
   command -v networksetup >/dev/null 2>&1 || return 0
 
-  if [[ -z "${SUDO_BIN}" ]]; then
+  if [[ -z "${SUDO_BIN}" ]] && ! is_root; then
     warn "MACOS_DNS_GUARD is enabled but SUDO_BIN is empty; skip applying DNS guard"
     return 0
   fi
 
   config_has_tun_inbound "${config_file}" || return 0
 
-  if [[ -f "${MACOS_DNS_GUARD_STATE_FILE}" ]]; then
-    return 0
+  if [[ -f "${MACOS_DNS_GUARD_STATE_FILE}" || -f "${MACOS_DNS_GUARD_STATE_TXT_FILE}" ]]; then
+    # A previous run may have exited unexpectedly without calling `./fly off`.
+    # Restore first to avoid stale state and potential DNS behavior drift.
+    macos_dns_guard_restore_if_needed || true
   fi
 
   local device=""
@@ -389,15 +495,38 @@ macos_dns_guard_apply_if_needed() {
     macos_dns_guard_write_state "${service}" "list" "${servers[@]}"
   fi
 
-  # Force system DNS to public resolvers while sing-box is running.
-  # This prevents common macOS DNS leak scenarios when the system DNS comes from LAN/router (private IP),
-  # which may bypass tun routes due to more specific local routes.
-  if ! run_as_sudo networksetup -setdnsservers "${service}" 223.5.5.5 223.6.6.6 2400:3200::1 2400:3200:baba::1 >/dev/null 2>&1; then
-    # Some setups reject IPv6 resolvers (or have IPv6 disabled). Fall back to IPv4-only guard
-    # instead of skipping the guard entirely.
-    if ! run_as_sudo networksetup -setdnsservers "${service}" 223.5.5.5 223.6.6.6 >/dev/null 2>&1; then
+  # Fail-closed mode: Force system DNS to a TUN-side address while sing-box is running.
+  # This makes DNS queries enter the tun inbound, so `route.rules[].action=hijack-dns` can handle them.
+  local -a guard_servers=()
+  local line
+  while IFS= read -r line; do
+    line="$(printf '%s' "${line}" | xargs || true)"
+    [[ -n "${line}" ]] || continue
+    guard_servers+=("${line}")
+  done < <(config_get_tun_dns_guard_servers "${config_file}" 2>/dev/null || true)
+
+  if ((${#guard_servers[@]} == 0)); then
+    warn "cannot derive TUN DNS guard servers from config; skip"
+    rm -f "${MACOS_DNS_GUARD_STATE_FILE}" || true
+    rm -f "${MACOS_DNS_GUARD_STATE_TXT_FILE}" || true
+    return 0
+  fi
+
+  if ! run_as_sudo networksetup -setdnsservers "${service}" "${guard_servers[@]}" >/dev/null 2>&1; then
+    # Some setups reject IPv6 DNS servers (or have IPv6 disabled). Fall back to IPv4-only guard if possible.
+    local -a v4_only=()
+    local s
+    for s in "${guard_servers[@]}"; do
+      if [[ "${s}" != *:* ]]; then
+        v4_only+=("${s}")
+      fi
+    done
+    if ((${#v4_only[@]})) && run_as_sudo networksetup -setdnsservers "${service}" "${v4_only[@]}" >/dev/null 2>&1; then
+      guard_servers=("${v4_only[@]}")
+    else
       warn "failed to apply macOS DNS guard via networksetup; skip"
       rm -f "${MACOS_DNS_GUARD_STATE_FILE}" || true
+      rm -f "${MACOS_DNS_GUARD_STATE_TXT_FILE}" || true
       return 0
     fi
   fi
@@ -405,18 +534,23 @@ macos_dns_guard_apply_if_needed() {
   run_as_sudo killall -HUP mDNSResponder >/dev/null 2>&1 || true
 
   if [[ -t 1 ]]; then
-    log "macOS DNS guard applied for '${service}' (restored on ./fly off)"
+    log "macOS DNS guard applied for '${service}' (DNS -> ${guard_servers[*]}, restored on ./fly off)"
   fi
 }
 
 macos_dns_guard_restore_if_needed() {
   is_darwin || return 0
   command -v networksetup >/dev/null 2>&1 || return 0
-  [[ -f "${MACOS_DNS_GUARD_STATE_FILE}" ]] || return 0
-  [[ -n "${SUDO_BIN}" ]] || return 0
+  [[ -f "${MACOS_DNS_GUARD_STATE_FILE}" || -f "${MACOS_DNS_GUARD_STATE_TXT_FILE}" ]] || return 0
+  if [[ -z "${SUDO_BIN}" ]] && ! is_root; then
+    return 0
+  fi
 
   local info=""
-  info="$("${PYTHON_BIN}" - "${MACOS_DNS_GUARD_STATE_FILE}" <<'PY'
+  if [[ -f "${MACOS_DNS_GUARD_STATE_TXT_FILE}" ]]; then
+    info="$(cat "${MACOS_DNS_GUARD_STATE_TXT_FILE}" 2>/dev/null || true)"
+  else
+    info="$("${PYTHON_BIN}" - "${MACOS_DNS_GUARD_STATE_FILE}" <<'PY'
 import json
 import sys
 from pathlib import Path
@@ -428,6 +562,7 @@ for s in d.get("servers", []):
     print(s)
 PY
 )" || return 0
+  fi
 
   local service mode
   service="$(printf '%s\n' "${info}" | sed -n '1p')"
@@ -453,11 +588,97 @@ PY
   fi
 
   rm -f "${MACOS_DNS_GUARD_STATE_FILE}" || true
+  rm -f "${MACOS_DNS_GUARD_STATE_TXT_FILE}" || true
   run_as_sudo dscacheutil -flushcache >/dev/null 2>&1 || true
   run_as_sudo killall -HUP mDNSResponder >/dev/null 2>&1 || true
   if [[ -t 1 ]]; then
     log "macOS DNS guard restored for '${service}'"
   fi
+}
+
+macos_dns_guard_watchdog_start_if_needed() {
+  local watched_pid="$1"
+  is_darwin || return 0
+  is_true "${MACOS_DNS_GUARD}" || return 0
+  : "${MACOS_DNS_GUARD_WATCHDOG:=true}"
+  is_true "${MACOS_DNS_GUARD_WATCHDOG}" || return 0
+  [[ "${watched_pid}" =~ ^[0-9]+$ ]] || return 0
+  [[ -f "${MACOS_DNS_GUARD_STATE_FILE}" || -f "${MACOS_DNS_GUARD_STATE_TXT_FILE}" ]] || return 0
+  command -v networksetup >/dev/null 2>&1 || return 0
+  [[ -n "${SUDO_BIN}" ]] || return 0
+  need_cmd nohup
+  need_cmd ps
+
+  local script='
+set -euo pipefail
+pid="$1"
+state_json="$2"
+state_txt="$3"
+
+is_alive() { kill -0 "$pid" >/dev/null 2>&1; }
+
+while is_alive; do
+  if [[ ! -f "$state_json" && ! -f "$state_txt" ]]; then
+    exit 0
+  fi
+  comm="$(ps -p "$pid" -o comm= 2>/dev/null | xargs || true)"
+  if [[ -n "$comm" && "$comm" != "sing-box" ]]; then
+    break
+  fi
+  sleep 2
+done
+
+if [[ ! -f "$state_txt" && ! -f "$state_json" ]]; then
+  exit 0
+fi
+
+service=""
+mode=""
+servers=""
+if [[ -f "$state_txt" ]]; then
+  service="$(sed -n "1p" "$state_txt" 2>/dev/null || true)"
+  mode="$(sed -n "2p" "$state_txt" 2>/dev/null || true)"
+  servers="$(sed -n "3,\$p" "$state_txt" 2>/dev/null || true)"
+else
+  exit 0
+fi
+
+if [[ -z "$service" ]]; then
+  exit 0
+fi
+
+if [[ "$mode" == "empty" ]]; then
+  networksetup -setdnsservers "$service" empty >/dev/null 2>&1 || true
+else
+  set +e
+  args=()
+  while IFS= read -r line; do
+    line="$(printf "%s" "$line" | xargs || true)"
+    [[ -n "$line" ]] || continue
+    args+=("$line")
+  done <<< "$servers"
+  set -e
+  if ((${#args[@]})); then
+    networksetup -setdnsservers "$service" "${args[@]}" >/dev/null 2>&1 || true
+  else
+    networksetup -setdnsservers "$service" empty >/dev/null 2>&1 || true
+  fi
+fi
+
+dscacheutil -flushcache >/dev/null 2>&1 || true
+killall -HUP mDNSResponder >/dev/null 2>&1 || true
+rm -f "$state_json" "$state_txt" >/dev/null 2>&1 || true
+'
+
+  # Start a root watchdog so it can restore DNS even after sudo ticket expires.
+  # The watchdog is self-terminating and does not write any PID file (avoid root-owned files in repo).
+  local watch_cmd=""
+  printf -v watch_cmd 'nohup /bin/bash -c %q _ %q %q %q > /dev/null 2>&1 &' \
+    "${script}" \
+    "${watched_pid}" \
+    "${MACOS_DNS_GUARD_STATE_FILE}" \
+    "${MACOS_DNS_GUARD_STATE_TXT_FILE}"
+  run_as_sudo /bin/bash -c "${watch_cmd}" >/dev/null 2>&1 || true
 }
 
 detect_os() {
@@ -1721,6 +1942,7 @@ cmd_on() {
   stdout_line "${COLOR_CYAN}" "log: ${LOG_FILE}"
 
   macos_dns_guard_apply_if_needed "${config_file}"
+  macos_dns_guard_watchdog_start_if_needed "${new_pid}"
 }
 
 cmd_off() {

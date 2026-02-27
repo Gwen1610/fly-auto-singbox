@@ -147,8 +147,9 @@
   - `./fly build-config --target desktop --profile terminal --ruleset`
 
 ## Session 2026-02-27 (terminal DNS 泄露加固：macOS guard + proxy-mode 解析)
-- [x] macOS DNS guard：选择“当前有 IP 的网络服务”，并同时设置 IPv4/IPv6 公网 DNS，避免 VPN 启动后接口/IPv6 resolver 导致的泄露与不生效。
+- [x] macOS DNS guard：选择“当前有 IP 的网络服务”，并把系统 DNS 指向 tun 网段内地址（fail-closed，IPv6 不可用时回退 IPv4-only），避免 LAN 私网 DNS 绕过 tun 导致泄露。
 - [x] macOS DNS guard：应用/恢复后 flush DNS cache（`dscacheutil` + `mDNSResponder`）。
+- [x] macOS DNS guard：可选启动 root watchdog，sing-box 异常退出时也能自动恢复系统 DNS（避免残留）。
 - [x] terminal profile：注入 `mixed-in` 的 `route.rules[].action=resolve`，代理模式下 DNS 统一走 sing-box DNS 路由。
 - [x] terminal profile：tun 入站默认 `sniff_override_destination=false`（减少额外“域名覆盖”触发的解析链路）。
 - [x] 更新 `tests/test_pipeline.sh` 覆盖上述行为。

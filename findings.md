@@ -260,8 +260,8 @@ curl -s -X PUT "http://127.0.0.1:9090/proxies/HongKong" \
 - 进一步排查发现：terminal profile 里的全局 `route.default_domain_resolver=default-dns` 也会扩大 direct 解析影响面，和 VT 语义存在偏移。
 - 修正方案：移除全局 `route.default_domain_resolver`，改为给 terminal 档的 dial outbounds 注入 `domain_resolver=default-dns`（含 `dns_direct` 和节点出站），保持 VT 行为同时满足 1.12+ 迁移要求。
 - 仍可能出现的“终端 DNS 泄露”常见根因（macOS）：系统 DNS 来自路由器/LAN 私网地址（DHCP 下常见），而 tun 的 auto_route 默认不会覆盖更具体的 LAN 路由，导致 DNS 查询直接走物理网卡绕过 tun（VT 客户端会通过系统 VPN 机制接管 DNS，因此不复现）。
-- 工程化修复：在 `fly on/off` 增加 macOS DNS guard（启动 tun 配置时临时把系统 DNS 固定到公网地址，并在停止时恢复），减少这类泄露的环境依赖。
-- DNS guard 补强：优先选择“当前有 IP 的网络服务”（避免 VPN 启动后默认路由接口变为 `utun*` 导致映射失败），并同时设置 IPv4/IPv6 公网 DNS（降低 IPv6 resolver 仍走本地链路的泄露概率），同时 flush 系统 DNS cache。
+- 工程化修复：在 `fly on/off` 增加 macOS DNS guard（启动 tun 配置时临时把系统 DNS 指向 tun 网段内地址，以 fail-closed 的方式减少这类泄露的环境依赖，并在停止时恢复）。
+- DNS guard 补强：优先选择“当前有 IP 的网络服务”（避免 VPN 启动后默认路由接口变为 `utun*` 导致映射失败）；同时设置 IPv4/IPv6（若系统不接受 IPv6 DNS 自动回退 IPv4-only）；并在应用/恢复后 flush 系统 DNS cache；并可选启动 root watchdog，sing-box 异常退出时也能自动恢复系统 DNS（避免残留）。
 - terminal profile 补强：对 `mixed-in` 注入 `route.rules[].action=resolve`（代理模式下由 sing-box DNS 统一解析，避免走系统 DNS）；并将 tun 入站的 `sniff_override_destination` 默认关闭（减少由“覆盖目的地为域名”触发的额外解析链路）。
 - 同步完成配置产物目录统一：
   - 默认 `CONFIG_OUTPUT_DIR=./runtime-configs`

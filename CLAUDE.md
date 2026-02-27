@@ -131,7 +131,8 @@ bash tests/test_pipeline.sh
 - `config/group-strategy.json`：分组结构（地区默认值、业务组、Proxy 成员）
 - `config/route-rules.json`：分流规则（`build-rules` 生成，或手工编辑）
 - `config_template/*.example*`：`./fly init` 的来源模板，不直接参与运行
-- `MACOS_DNS_GUARD`（默认 true）：macOS 下 `./fly on` 启动 tun 配置时临时设置系统 DNS，`./fly off` 自动恢复，用于减少 DNS 泄露
+- `MACOS_DNS_GUARD`（默认 true）：macOS 下 `./fly on` 启动 tun 配置时临时把系统 DNS 指向 tun 网段内地址（fail-closed），`./fly off` 自动恢复，用于减少 DNS 泄露
+- `MACOS_DNS_GUARD_WATCHDOG`（默认 true）：macOS 下额外启动一个 root watchdog，sing-box 异常退出时也会自动恢复系统 DNS，避免残留
 
 ## 外部参考资料
 
