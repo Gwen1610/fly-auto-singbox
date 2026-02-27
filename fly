@@ -392,11 +392,15 @@ macos_dns_guard_apply_if_needed() {
   # Force system DNS to public resolvers while sing-box is running.
   # This prevents common macOS DNS leak scenarios when the system DNS comes from LAN/router (private IP),
   # which may bypass tun routes due to more specific local routes.
-  run_as_sudo networksetup -setdnsservers "${service}" 223.5.5.5 223.6.6.6 2400:3200::1 2400:3200:baba::1 >/dev/null 2>&1 || {
-    warn "failed to apply macOS DNS guard via networksetup; skip"
-    rm -f "${MACOS_DNS_GUARD_STATE_FILE}" || true
-    return 0
-  }
+  if ! run_as_sudo networksetup -setdnsservers "${service}" 223.5.5.5 223.6.6.6 2400:3200::1 2400:3200:baba::1 >/dev/null 2>&1; then
+    # Some setups reject IPv6 resolvers (or have IPv6 disabled). Fall back to IPv4-only guard
+    # instead of skipping the guard entirely.
+    if ! run_as_sudo networksetup -setdnsservers "${service}" 223.5.5.5 223.6.6.6 >/dev/null 2>&1; then
+      warn "failed to apply macOS DNS guard via networksetup; skip"
+      rm -f "${MACOS_DNS_GUARD_STATE_FILE}" || true
+      return 0
+    fi
+  fi
   run_as_sudo dscacheutil -flushcache >/dev/null 2>&1 || true
   run_as_sudo killall -HUP mDNSResponder >/dev/null 2>&1 || true
 
