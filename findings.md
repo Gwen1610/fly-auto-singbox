@@ -145,3 +145,9 @@
 - 解决：DNS 注入 `local` 与 `google` server，并通过规则让“节点域名 bootstrap 走 local”，同时让 Google/YouTube 域名走 `google`。
 - 分组体验：`HongKong/Singapore/Japan` 的来源+地区子组默认使用 `urltest` 自动选最快；`America` 保持 `selector` 手动选择。
 - 补充：新增 `docs/future-work.md` 记录后续可选优化（开关化 QUIC、PSL、IPv6 策略、urltest 参数等）。
+
+## 2026-02-23 (bulianglin DNS anti-leak logic review, no code changes)
+- 原教程页面 `https://bulianglin.com/archives/singbox.html` 自动抓取时被 Cloudflare 验证拦截，无法直接读取正文；本轮分析基于用户提供的 `example/config.json` 和 `example/tun.json`。
+- 对方配置的核心思路是“DNS 单独建模”：多 resolver 分角色（本地 / system / block / 远程 DoH），再用 `dns.rules` 决定解析路径。
+- 当前项目（VT 1.11.4 兼容版）已经具备关键防泄露基础：`strict_route`、`hijack-dns`、DNS 专用直连出口 `dns_direct`、本地/远程 DNS 分工与模式规则。
+- 可借鉴的主要增强方向：把 `dns.final=remote` + `CN rule_set -> local` 做成“隐私优先”可选模式；`system-dns` 与 `query_type=HTTPS` 拦截可作为后续可选项。

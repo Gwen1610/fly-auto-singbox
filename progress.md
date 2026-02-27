@@ -93,3 +93,9 @@
 - [x] 更新 README，补充默认连通性注入说明与 Future Work 链接。
 - [x] 验证通过：`bash tests/test_pipeline.sh`、`sing-box check -c config.json`。
 - [x] 提交并 push 到 `origin/main`。
+
+## Session 2026-02-23 (bulianglin 配置借鉴分析，文档先行)
+- [x] 阅读用户提供的 `example/config.json` 与 `example/tun.json`，提取 DNS 防泄露相关逻辑。
+- [x] 尝试读取原教程页面，确认被 Cloudflare 验证拦截（无法自动抓正文）。
+- [x] 对照当前 VT 1.11.4 兼容生成配置，归纳“已做到 / 可借鉴 / 不建议照搬”的点。
+- [x] 新增文档 `docs/bulianglin-dns-leak-borrowing-notes.md`（仅方案思路，不改代码）。

@@ -144,3 +144,10 @@ Complete (Phase 17)
 | 并行执行验证命令时单条命令被审批策略拒绝 | 1 | 拆分为单独命令执行，通过后继续 |
 | `build_route_rules.py` 在最小测试环境缺少 `requests` | 1 | 增加 `urllib` 回退，不依赖第三方包也可运行 |
 | 本地规则源相对路径被解析到 `config/` 下导致找不到文件 | 1 | 相对路径优先按 sources 文件目录解析，若不存在再回退到工作目录 |
+
+### Phase 18: Bulianglin DNS 逻辑借鉴文档（仅分析，不改代码）
+- [x] 读取 `example/config.json` / `example/tun.json`
+- [x] 尝试访问教程正文（Cloudflare 验证拦截，改为基于本地拷贝分析）
+- [x] 对照当前 VT 1.11.4 兼容配置，梳理已实现的防泄露能力与差距
+- [x] 产出借鉴思路文档到 `docs/`
+- **Status:** complete
