@@ -121,6 +121,18 @@
       "enabled": true,
       "url": "https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/master/rule/QuantumultX/China/China.list",
       "outbound": "Direct"
+    },
+    {
+      "tag": "ByteDance",
+      "enabled": true,
+      "url": "https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/refs/heads/master/rule/QuantumultX/ByteDance/ByteDance.list",
+      "outbound": "Direct"
+    },
+    {
+      "tag": "CSDN",
+      "enabled": true,
+      "url": "https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/refs/heads/master/rule/QuantumultX/CSDN/CSDN.list",
+      "outbound": "Direct"
     }
   ],
   "manual_rules": [

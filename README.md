@@ -86,7 +86,7 @@ sing-box version
 提示：
 
 - `subscribes[].enabled` 必须是 `true` 才会生效。
-- `subscribes[].tag` 建议明确写（例如 `A`、`B`），用于后续自动生成 `A-HongKong`、`B-HongKong` 这类来源分组。
+- `subscribes[].tag` 建议明确写（例如 `M78`、`TAG`），用于后续自动生成 `M78-HongKong`、`TAG-Singapore` 这类来源分组。
 - `subscribes[].url` 是订阅链接时应为 `http/https`，程序会先下载再解析。
 - 如果节点名称里没有地区标识（US/HK/SG/JP 或对应中文/常见缩写），提取会失败。
 
@@ -316,15 +316,16 @@ sing-box version
 `build-config` 会按下面四层生成 outbounds 选择器：
 
 1. 来源+地区层  
-例如你有两个订阅 `A` 和 `B`，会生成 `A-HongKong`、`B-HongKong`、`A-America` 等组，每组只包含该来源该地区节点。
+例如你有两个订阅 `M78` 和 `TAG`，会生成 `M78-HongKong`、`TAG-HongKong`、`M78-Singapore`、`TAG-Japan` 等组，每组只包含该来源该地区节点。
 
 默认情况下：
 
 - `HongKong`/`Singapore`/`Japan` 的来源+地区组使用 `urltest`（自动选最快）。
 - `America` 的来源+地区组保持 `selector`（手动选择）。
+- `urltest` 会按配置里的 `url` 周期性测速并自动更新选择（当前默认 `https://www.gstatic.com/generate_204`，间隔 `10m`）。
 
 2. 地区聚合层  
-例如 `HongKong` 组会包含 `A-HongKong`、`B-HongKong`，默认值由 `group-strategy` 里的 `region_defaults` 决定（例如默认 `A-HongKong`）。
+例如 `HongKong` 组会包含 `M78-HongKong`、`TAG-HongKong`，默认值由 `group-strategy` 里的 `region_defaults` 决定（例如默认 `M78-HongKong`）。
 
 3. 业务分组层  
 你可以在 `group-strategy` 的 `custom_groups` 自定义，例如 `Streaming`、`AI`，成员可引用地区组（如 `HongKong`、`America`）或其他已存在组。
@@ -337,22 +338,30 @@ sing-box version
 ```json
 {
   "region_defaults": {
-    "HongKong": "A"
+    "HongKong": "M78",
+    "America": "TAG",
+    "Singapore": "M78",
+    "Japan": "M78"
   },
   "custom_groups": [
     {
       "tag": "Streaming",
-      "members": ["HongKong", "America"],
+      "members": ["HongKong", "Japan", "Singapore"],
       "default": "HongKong"
     },
     {
       "tag": "AI",
-      "members": ["HongKong", "America"],
-      "default": "HongKong"
+      "members": ["America", "Singapore", "Japan"],
+      "default": "America"
+    },
+    {
+      "tag": "Search",
+      "members": ["HongKong", "America", "Singapore", "Japan"],
+      "default": "America"
     }
   ],
   "proxy": {
-    "members": ["Streaming", "AI", "HongKong", "America", "Singapore", "Japan"],
+    "members": ["HongKong", "America", "Singapore", "Japan"],
     "default": "HongKong"
   }
 }
@@ -471,20 +480,20 @@ macOS 说明（终端 tun 模式 DNS 泄露）：
 === fly select — 选择分组 ===
 
   (1) Proxy                    [当前: HongKong]
-  (2) HongKong                 [当前: A-HongKong] 12ms
-  (3) America                  [当前: A-US-01]
+  (2) HongKong                 [当前: M78-HongKong] 12ms
+  (3) America                  [当前: TAG-America]
   (4) Streaming                [当前: HongKong]
 
 选择分组 [1/2/3/4/q]: 2
 
 === fly select — HongKong ===
 
-  (1) A-HongKong               ★ 当前  12ms
-  (2) B-HongKong               45ms
+  (1) M78-HongKong             ★ 当前  12ms
+  (2) TAG-HongKong             45ms
   (b) ← 返回分组列表
 
 选择节点 [1/2/b/q]: 2
-[fly] HongKong -> B-HongKong ✓
+[fly] HongKong -> TAG-HongKong ✓
 ```
 
 切换实时生效，新连接立即走新节点，无需重启。
