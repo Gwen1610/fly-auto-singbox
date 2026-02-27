@@ -1177,6 +1177,7 @@ cmd_log() {
 # ---------------------------------------------------------------------------
 
 cmd_select() {
+  load_env
   local target_group="${1:-}"
   fly_api_check || die "Clash API 不可达 (API_HOST=${API_HOST})
 提示：请先运行 ./fly on，并确认 config.json 中已启用 experimental.clash_api"
@@ -1314,6 +1315,7 @@ _fly_format_bytes() {
 }
 
 cmd_delay() {
+  load_env
   local target_group="${1:-}"
   fly_api_check || die "Clash API 不可达 (API_HOST=${API_HOST})"
 
@@ -1486,6 +1488,7 @@ for name, info in proxies.items():
 }
 
 cmd_monitor() {
+  load_env
   fly_api_check || die "Clash API 不可达 (API_HOST=${API_HOST})"
   command -v tput >/dev/null 2>&1 || die "tput is required for fly monitor"
 
