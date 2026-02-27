@@ -917,6 +917,18 @@ fly_tui_choose_rules_mode() {
   return 0
 }
 
+fly_tui_confirm_publish_ruleset() {
+  _fly_tui_title "规则构建完成 · 是否发布到 GitHub"
+  _fly_tui_option "1" "否" ""
+  _fly_tui_option "2" "是，执行 publish-ruleset" "git add/commit/push ruleset/"
+  _fly_tui_prompt "是否现在发布"
+  local selected="${_FLY_TUI_RESULT}"
+  if [[ "${selected}" == "2" ]]; then
+    return 0
+  fi
+  return 1
+}
+
 _FLY_ON_CONFIG_RESULT=""
 
 fly_tui_choose_on_config() {
@@ -1528,6 +1540,13 @@ cmd_build_rules() {
     log "generated ruleset route rules -> ${ROUTE_RULES_FILE_RULESET}"
     log "generated rule-set files -> ${ruleset_dir}"
     log "ruleset base url -> ${base_url}"
+    log "hint: if you use remote .srs URLs, run: ./fly publish-ruleset"
+
+    if is_true "${interactive}" && fly_can_tui; then
+      if fly_tui_confirm_publish_ruleset; then
+        cmd_publish_ruleset
+      fi
+    fi
     return 0
   fi
 

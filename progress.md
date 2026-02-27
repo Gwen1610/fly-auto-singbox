@@ -153,3 +153,13 @@
 - [x] terminal profile：注入 `mixed-in` 的 `route.rules[].action=resolve`，代理模式下 DNS 统一走 sing-box DNS 路由。
 - [x] terminal profile：tun 入站默认 `sniff_override_destination=false`（减少额外“域名覆盖”触发的解析链路）。
 - [x] 更新 `tests/test_pipeline.sh` 覆盖上述行为。
+
+## Session 2026-02-27（QX 规则 OR 语义修复 + ruleset 发布提示）
+- [x] 修复 `scripts/build_route_rules.py`：inline/ruleset 模式不再把不同 matcher（如 `domain_suffix` + `ip_cidr`）合并到同一条 rule，避免被 sing-box 以 AND 语义匹配导致分流失效。
+- [x] `build-rules --ruleset` 增加输出提示：若配置引用远程 `.srs`，需要执行 `./fly publish-ruleset` 发布到 GitHub。
+- [x] TUI：`build-rules` 在 ruleset 模式生成后询问是否执行 `publish-ruleset`（显式用户确认）。
+- [x] 更新 `tests/test_pipeline.sh` 覆盖：
+  - inline mode：每条规则只包含 1 种 matcher key（避免 `domain_suffix`/`ip_cidr` 混合）。
+  - ruleset JSON：`rules[]` 按 matcher 拆分（而不是合并成 1 条）。
+  - `build-rules --ruleset` 输出包含 `publish-ruleset` 提示。
+- [x] 验证通过：`bash -n fly`、`python3 -m py_compile scripts/build_route_rules.py`、`bash tests/test_pipeline.sh`。

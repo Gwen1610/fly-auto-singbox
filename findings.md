@@ -104,6 +104,7 @@
   - 无 `PyYAML` 时使用最小 `payload` 解析回退；
   - 相对路径规则源支持 `sources 文件目录` 与 `当前工作目录` 双路径解析。
 
+
 ## 2026-02-12 (manual supplements + outbound alias normalization)
 - 新增 `manual_rules` 字段：可直接在 `config/rule-sources*.json` 写 QX 单行规则（例如 `DOMAIN-SUFFIX, ai.dev, America`）。
 - `build_route_rules.py` 现在会解析 `manual_rules` 并合并到输出 `route-rules.json`。

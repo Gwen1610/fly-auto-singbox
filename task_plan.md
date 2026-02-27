@@ -391,6 +391,23 @@ $ ./fly delay
 
 ---
 
+## Phase 27: QX 规则 OR 语义修复 + ruleset 发布提示
+
+**目标：**
+1) 修复 inline/ruleset 规则构建中“不同 matcher 被合并到同一条 rule，导致 sing-box 以 AND 语义匹配”的问题；  
+2) 在规则生成后提示/引导用户发布远程 `.srs`，避免 iOS/VT 端引用 URL 时拿到旧版本或 404。
+
+### 任务列表
+
+- [x] 修复 `scripts/build_route_rules.py`：将不同 matcher key 拆分为多个 rule blocks（保持 QX/Clash 的 OR 语义）。
+- [x] ruleset JSON 同步按 matcher 拆分 `rules[]`（避免 `.srs` 匹配面过窄）。
+- [x] `fly build-rules --ruleset` 输出提示：需要 `./fly publish-ruleset` 才能让远程 `.srs` 更新生效。
+- [x] TUI：在交互选择 ruleset 模式并生成完成后，询问是否立即执行 `publish-ruleset`。
+- [x] 更新 `tests/test_pipeline.sh` 覆盖上述行为。
+- **Status:** complete
+
+---
+
 ## Errors Encountered
 | Error | Attempt | Resolution |
 |---|---|---|

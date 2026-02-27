@@ -396,11 +396,17 @@ def main():
             continue
 
         if mode == "inline":
-            rule = {key: sorted(values) for key, values in sorted(values_by_key.items())}
-            rule["outbound"] = outbound
-            built_rules.append(rule)
+            # QX / Clash style rule lists are "OR" across different matcher types:
+            # DOMAIN-SUFFIX,example.com
+            # IP-CIDR,1.1.1.1/32
+            # should match either, not require both.
+            #
+            # sing-box route rules are "AND" across keys in a single rule object,
+            # so we must split different matcher types into separate rule objects.
+            for key, values in sorted(values_by_key.items()):
+                built_rules.append({key: sorted(values), "outbound": outbound})
             print(
-                f"source '{tag}' -> {sum(len(v) for v in values_by_key.values())} entries",
+                f"source '{tag}' -> {sum(len(v) for v in values_by_key.values())} entries in {len(values_by_key)} blocks",
                 file=sys.stderr,
             )
             continue
@@ -419,10 +425,8 @@ def main():
         json_path = (ruleset_dir / f"{ruleset_tag}.json").resolve()
         srs_path = (ruleset_dir / f"{ruleset_tag}.srs").resolve()
 
-        ruleset_json = {
-            "version": 1,
-            "rules": [{key: sorted(values) for key, values in sorted(values_by_key.items())}],
-        }
+        # Same as inline mode: split matcher types into separate rule objects to keep "OR" semantics.
+        ruleset_json = {"version": 1, "rules": [{key: sorted(values)} for key, values in sorted(values_by_key.items())]}
         json_path.write_text(json.dumps(ruleset_json, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
         if not args.skip_compile:

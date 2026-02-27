@@ -85,6 +85,18 @@ VT_DNS_DIRECT_TAG = "dns_direct"
 
 GEOIP_TAG_RE = re.compile(r"^[a-z0-9-]+$", re.IGNORECASE)
 
+ROUTE_MATCHER_KEYS = (
+    "rule_set",
+    "domain",
+    "domain_suffix",
+    "domain_keyword",
+    "domain_regex",
+    "ip_cidr",
+    "source_ip_cidr",
+    "port",
+    "source_port",
+)
+
 
 def guess_ruleset_remote_url(tag: str) -> str:
     """
@@ -352,17 +364,13 @@ def ensure_inbound_sniff(config, compat_profile="vt"):
     inbounds = config.get("inbounds", [])
     if not isinstance(inbounds, list):
         return
-    profile = str(compat_profile).strip().lower()
     for inbound in inbounds:
         if not isinstance(inbound, dict):
             continue
         if inbound.get("type") not in {"tun", "mixed"}:
             continue
         inbound.setdefault("sniff", True)
-        if inbound.get("type") == "tun" and profile == "terminal":
-            inbound.setdefault("sniff_override_destination", False)
-        else:
-            inbound.setdefault("sniff_override_destination", True)
+        inbound.setdefault("sniff_override_destination", True)
 
 
 def upsert_dns_server(servers, tag: str, desired: dict):
@@ -443,9 +451,10 @@ def ensure_connectivity_dns(config, outbounds):
 
     dns["final"] = "google"
     dns["strategy"] = "ipv4_only"
+    dns["reverse_mapping"] = True
     dns.setdefault("disable_cache", False)
     dns.setdefault("disable_expire", False)
-    dns.setdefault("independent_cache", False)
+    dns["independent_cache"] = False
 
     rules = dns.get("rules")
     if not isinstance(rules, list):
@@ -603,9 +612,10 @@ def ensure_connectivity_dns_terminal(config, outbounds):
 
     dns["final"] = "google"
     dns["strategy"] = "ipv4_only"
+    dns["reverse_mapping"] = True
     dns.setdefault("disable_cache", False)
     dns.setdefault("disable_expire", False)
-    dns.setdefault("independent_cache", False)
+    dns["independent_cache"] = False
 
     rules = dns.get("rules")
     if not isinstance(rules, list):
@@ -779,12 +789,19 @@ def ensure_connectivity_route(config, user_rules, compat_profile="vt"):
     combined.extend(user_rules)
 
     if cn_route_tags:
+        cn_rule_set_value = cn_route_tags if len(cn_route_tags) > 1 else cn_route_tags[0]
         cn_route_rule = {
-            "rule_set": cn_route_tags if len(cn_route_tags) > 1 else cn_route_tags[0],
+            "rule_set": cn_rule_set_value,
             "action": "direct",
         }
-        combined_dump = json.dumps(combined, ensure_ascii=False, sort_keys=True)
-        if json.dumps(cn_route_rule, ensure_ascii=False, sort_keys=True) not in combined_dump:
+        # Check if any existing rule already covers these rule_set tags (list or string format)
+        cn_set = set(cn_route_tags)
+        already_covered = any(
+            (set(r["rule_set"]) if isinstance(r.get("rule_set"), list) else {r["rule_set"]}) == cn_set
+            for r in combined
+            if r.get("rule_set") is not None
+        )
+        if not already_covered:
             combined.append(cn_route_rule)
     return combined
 
@@ -932,6 +949,29 @@ def collect_required_rule_sets(rules):
     return tags
 
 
+def split_mixed_matcher_rule(rule):
+    """
+    Backward compatibility for stale route-rules.json:
+    old builds may merge multiple matcher families into one rule object.
+    sing-box treats keys in one rule as AND, while QX sources are OR-oriented.
+    """
+    matcher_keys = [key for key in ROUTE_MATCHER_KEYS if rule.get(key) is not None]
+    if len(matcher_keys) <= 1:
+        return [rule], False
+
+    # Keep explicit logical trees untouched.
+    if rule.get("type") == "logical" or isinstance(rule.get("rules"), list):
+        return [rule], False
+
+    base = {key: deepcopy(value) for key, value in rule.items() if key not in ROUTE_MATCHER_KEYS}
+    split_rules = []
+    for matcher_key in matcher_keys:
+        split_rule = deepcopy(base)
+        split_rule[matcher_key] = deepcopy(rule[matcher_key])
+        split_rules.append(split_rule)
+    return split_rules, True
+
+
 def validate_rules(rules_cfg, outbound_tags):
     if not isinstance(rules_cfg, dict):
         raise RuntimeError("rules file must be a JSON object")
@@ -943,35 +983,46 @@ def validate_rules(rules_cfg, outbound_tags):
         final = VT_DNS_DIRECT_TAG
     if final not in outbound_tags:
         raise RuntimeError(f"route final outbound not found: {final}")
+    split_counter = 0
+    normalized_rules = []
     for index, rule in enumerate(rules):
         if not isinstance(rule, dict):
             raise RuntimeError(f"rules[{index}] must be object")
         ensure_legacy_geoip_compat(rule)
-        outbound = normalize_outbound(rule.get("outbound"))
-        if outbound:
-            # sing-box 1.11+ deprecates legacy special outbounds (`block`/`dns`) and
-            # recommends migrating them to rule actions.
-            # - outbound=block -> action=reject
-            # - outbound=dns   -> action=hijack-dns (see migration guide for sniff + hijack-dns)
-            # Additionally, we normalize outbound=direct to action=direct to keep configs consistent.
-            if outbound == "block":
-                rule.pop("outbound", None)
-                rule.setdefault("action", "reject")
-                outbound = ""
-            elif outbound == "dns":
-                rule.pop("outbound", None)
-                rule.setdefault("action", "hijack-dns")
-                outbound = ""
-            elif outbound == "direct":
-                rule.pop("outbound", None)
-                rule.setdefault("action", "direct")
-                outbound = ""
-            else:
-                if "outbound" in rule:
-                    rule["outbound"] = outbound
-                if outbound not in outbound_tags:
-                    raise RuntimeError(f"rules[{index}] outbound not found: {outbound}")
-    return final, rules
+        expanded_rules, was_split = split_mixed_matcher_rule(rule)
+        if was_split:
+            split_counter += 1
+
+        for current_rule in expanded_rules:
+            outbound = normalize_outbound(current_rule.get("outbound"))
+            if outbound:
+                # Migrate legacy outbound aliases to rule actions:
+                # block -> action=reject, dns -> action=hijack-dns, direct -> action=direct
+                if outbound == "block":
+                    current_rule.pop("outbound", None)
+                    current_rule.setdefault("action", "reject")
+                    outbound = ""
+                elif outbound == "dns":
+                    current_rule.pop("outbound", None)
+                    current_rule.setdefault("action", "hijack-dns")
+                    outbound = ""
+                elif outbound == "direct":
+                    current_rule.pop("outbound", None)
+                    current_rule.setdefault("action", "direct")
+                    outbound = ""
+                else:
+                    if "outbound" in current_rule:
+                        current_rule["outbound"] = outbound
+                    if outbound not in outbound_tags:
+                        raise RuntimeError(f"rules[{index}] outbound not found: {outbound}")
+            normalized_rules.append(current_rule)
+
+    if split_counter:
+        print(
+            f"warn: auto-split {split_counter} mixed matcher rule(s) from rules file for sing-box OR semantics",
+            file=sys.stderr,
+        )
+    return final, normalized_rules
 
 
 def build_config(base_template, outbounds, final_outbound, rules, extra_rule_sets=None, target="desktop", compat_profile="vt"):

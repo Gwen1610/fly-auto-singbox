@@ -339,6 +339,51 @@ assert_contains '"rule_set": \[' "./config/route-rules.json"
 assert_contains '"geoip-cn"' "./config/route-rules.json"
 assert_contains '"geosite-cn"' "./config/route-rules.json"
 assert_not_contains '"geoip": \[' "./config/route-rules.json"
+python3 - <<'PY'
+import json
+
+with open("./config/route-rules.json", "r", encoding="utf-8") as f:
+    rules_cfg = json.load(f)
+
+rules = rules_cfg.get("rules", [])
+if not isinstance(rules, list):
+    raise SystemExit("ASSERT FAIL: route-rules.json rules must be an array")
+
+# QX/Clash style rules are OR across matcher types; each sing-box rule object is AND across keys.
+# Ensure build-rules splits matcher types into separate rule objects (no mixed domain_suffix+ip_cidr).
+matcher_keys = {
+    "domain_suffix",
+    "domain",
+    "domain_keyword",
+    "domain_regex",
+    "ip_cidr",
+    "source_ip_cidr",
+    "port",
+    "source_port",
+    "rule_set",
+}
+
+america_rules = [r for r in rules if isinstance(r, dict) and r.get("outbound") == "America"]
+if len(america_rules) < 5:
+    raise SystemExit(f"ASSERT FAIL: expected >=5 America rule blocks (OpenAI + manual), got {len(america_rules)}")
+
+bad = []
+for r in america_rules:
+    keys = [k for k in matcher_keys if k in r]
+    if len(keys) != 1:
+        bad.append((keys, r))
+if bad:
+    raise SystemExit(f"ASSERT FAIL: expected each America rule to contain exactly 1 matcher key, got {bad[:2]}")
+
+if not any("domain_suffix" in r and "openai.com" in (r.get("domain_suffix") or []) for r in america_rules):
+    raise SystemExit("ASSERT FAIL: expected America domain_suffix rule to include openai.com")
+if not any("domain" in r and "chat.openai.com" in (r.get("domain") or []) for r in america_rules):
+    raise SystemExit("ASSERT FAIL: expected America domain rule to include chat.openai.com")
+if not any("domain_keyword" in r and "chatgpt" in (r.get("domain_keyword") or []) for r in america_rules):
+    raise SystemExit("ASSERT FAIL: expected America domain_keyword rule to include chatgpt")
+if not any("ip_cidr" in r and "1.1.1.1/32" in (r.get("ip_cidr") or []) for r in america_rules):
+    raise SystemExit("ASSERT FAIL: expected America ip_cidr rule to include 1.1.1.1/32")
+PY
 
 ./fly build-config
 python3 - <<'PY'
@@ -380,8 +425,58 @@ if not any(isinstance(item, dict) and item.get("tag") == "geosite-cn" for item i
     raise SystemExit("ASSERT FAIL: expected geosite-cn rule_set to be injected")
 PY
 
+# Backward compatibility: stale mixed matcher rules should be auto-split in build-config.
+cat > "./config/route-rules.json" <<'JSON'
+{
+  "final": "Proxy",
+  "rules": [
+    {
+      "domain_suffix": ["bilibili.com"],
+      "ip_cidr": ["103.151.151.130/32"],
+      "outbound": "direct"
+    }
+  ]
+}
+JSON
+./fly build-config --target desktop --profile terminal
+python3 - <<'PY'
+import json
+
+with open("./runtime-configs/config.terminal.json", "r", encoding="utf-8") as f:
+    cfg = json.load(f)
+
+rules = cfg.get("route", {}).get("rules", [])
+domain_hit = False
+ip_hit = False
+mixed_hit = False
+for item in rules:
+    if not isinstance(item, dict) or item.get("action") != "direct":
+        continue
+    domain_suffix = item.get("domain_suffix") or []
+    ip_cidr = item.get("ip_cidr") or []
+    if "bilibili.com" in domain_suffix:
+        domain_hit = True
+        if ip_cidr:
+            mixed_hit = True
+    if "103.151.151.130/32" in ip_cidr:
+        ip_hit = True
+        if domain_suffix:
+            mixed_hit = True
+
+if not domain_hit:
+    raise SystemExit("ASSERT FAIL: expected split direct (action=direct) domain_suffix rule for bilibili.com")
+if not ip_hit:
+    raise SystemExit("ASSERT FAIL: expected split direct (action=direct) ip_cidr rule for 103.151.151.130/32")
+if mixed_hit:
+    raise SystemExit("ASSERT FAIL: mixed matcher rule should be split into separate direct rules")
+PY
+
 # Build rule-set files from QX sources and reference them by remote URLs (small config for iOS clients).
-./fly build-rules --ruleset --base-url "https://example.com/ruleset" --ruleset-dir "./ruleset"
+ruleset_output="$(./fly build-rules --ruleset --base-url "https://example.com/ruleset" --ruleset-dir "./ruleset" 2>&1)"
+echo "${ruleset_output}" | grep -qE "publish-ruleset" || {
+  echo "ASSERT FAIL: expected build-rules --ruleset to print publish-ruleset hint" >&2
+  exit 1
+}
 assert_file_exists "./ruleset/qx-openai.json"
 assert_file_exists "./ruleset/qx-youtube.json"
 assert_file_exists "./ruleset/qx-openai.srs"
@@ -389,6 +484,23 @@ assert_file_exists "./ruleset/qx-youtube.srs"
 
 python3 - <<'PY'
 import json
+
+def assert_ruleset_split(path: str, expected_blocks: int):
+    with open(path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    rules = data.get("rules", [])
+    if not isinstance(rules, list) or len(rules) != expected_blocks:
+        raise SystemExit(f"ASSERT FAIL: expected {path} rules len={expected_blocks}, got {len(rules)}")
+    allowed = {"domain_suffix", "domain", "domain_keyword", "domain_regex", "ip_cidr", "source_ip_cidr", "port", "source_port", "rule_set"}
+    for idx, rule in enumerate(rules):
+        if not isinstance(rule, dict):
+            raise SystemExit(f"ASSERT FAIL: {path} rules[{idx}] must be object")
+        keys = [k for k in allowed if k in rule]
+        if len(keys) != 1:
+            raise SystemExit(f"ASSERT FAIL: expected {path} rules[{idx}] to have 1 matcher key, got {keys}")
+
+assert_ruleset_split("./ruleset/qx-openai.json", expected_blocks=4)
+assert_ruleset_split("./ruleset/qx-youtube.json", expected_blocks=3)
 
 with open("./config/route-rules.ruleset.json", "r", encoding="utf-8") as f:
     rules_cfg = json.load(f)
@@ -540,8 +652,8 @@ inbounds = cfg.get("inbounds", [])
 tun_in = next((item for item in inbounds if isinstance(item, dict) and item.get("type") == "tun"), None)
 if not tun_in:
     raise SystemExit("ASSERT FAIL: expected tun inbound in terminal profile")
-if tun_in.get("sniff_override_destination") is not False:
-    raise SystemExit("ASSERT FAIL: expected terminal tun sniff_override_destination=false (reduce DNS leak surfaces)")
+if tun_in.get("sniff_override_destination") is not True:
+    raise SystemExit("ASSERT FAIL: expected terminal tun sniff_override_destination=true (align VT direct match behavior)")
 
 route_rules = route.get("rules", [])
 if not any(isinstance(item, dict) and item.get("action") == "hijack-dns" for item in route_rules):
