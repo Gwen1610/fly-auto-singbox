@@ -17,6 +17,5 @@ __pycache__/
 /config.*.json
 /runtime-configs/
 ruleset/*.json
-example/*.config
-example/correct.json
+example/
 .worktrees/

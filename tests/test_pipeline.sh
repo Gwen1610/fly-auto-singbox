@@ -808,7 +808,7 @@ if not any(isinstance(item, dict) and isinstance(item.get("address"), str) for i
 if any(isinstance(item, dict) and "type" in item for item in servers):
     raise SystemExit("ASSERT FAIL: iOS dns.servers should not include 'type' field (VT 1.11.4 decode failure)")
 server_by_tag = {item.get("tag"): item for item in servers if isinstance(item, dict)}
-for tag in ("default-dns", "system-dns", "block-dns", "google"):
+for tag in ("bootstrap-dns", "default-dns", "google"):
     if tag not in server_by_tag:
         raise SystemExit(f"ASSERT FAIL: expected dns server {tag} in iOS VT config")
 tags_in_order = [item.get("tag") for item in servers if isinstance(item, dict)]
@@ -816,14 +816,24 @@ if "local" in tags_in_order:
     raise SystemExit("ASSERT FAIL: iOS Bulianglin DNS mode should remove legacy local DNS server")
 if tags_in_order.index("default-dns") > tags_in_order.index("google"):
     raise SystemExit("ASSERT FAIL: iOS default-dns must appear before google for address_resolver bootstrap")
-if server_by_tag["default-dns"].get("detour") != "dns_direct":
-    raise SystemExit("ASSERT FAIL: expected iOS default-dns detour=dns_direct")
-if server_by_tag["system-dns"].get("detour") != "dns_direct":
-    raise SystemExit("ASSERT FAIL: expected iOS system-dns detour=dns_direct")
-if dns.get("final") != "google":
-    raise SystemExit("ASSERT FAIL: expected iOS dns.final=google (Bulianglin style)")
-if dns.get("independent_cache") is not False:
-    raise SystemExit("ASSERT FAIL: expected iOS dns.independent_cache=false")
+if server_by_tag["bootstrap-dns"].get("detour") != "dns_direct":
+    raise SystemExit("ASSERT FAIL: expected iOS bootstrap-dns detour=dns_direct")
+if server_by_tag["bootstrap-dns"].get("address") != "223.5.5.5":
+    raise SystemExit("ASSERT FAIL: expected iOS bootstrap-dns address=223.5.5.5")
+if server_by_tag["google"].get("detour") != "Proxy":
+    raise SystemExit("ASSERT FAIL: expected iOS google detour=Proxy")
+if server_by_tag["default-dns"].get("detour") != "Proxy":
+    raise SystemExit("ASSERT FAIL: expected iOS default-dns detour=Proxy")
+if server_by_tag["default-dns"].get("address") != "tls://8.8.8.8":
+    raise SystemExit("ASSERT FAIL: expected iOS default-dns to use proxy TLS resolver")
+if server_by_tag["default-dns"].get("address_resolver") != "bootstrap-dns":
+    raise SystemExit("ASSERT FAIL: expected iOS default-dns address_resolver=bootstrap-dns")
+if dns.get("final") != "default-dns":
+    raise SystemExit("ASSERT FAIL: expected iOS dns.final=default-dns (anti-leak profile)")
+if dns.get("strategy") != "prefer_ipv4":
+    raise SystemExit("ASSERT FAIL: expected iOS dns.strategy=prefer_ipv4")
+if dns.get("independent_cache") is not True:
+    raise SystemExit("ASSERT FAIL: expected iOS dns.independent_cache=true")
 
 route = cfg.get("route", {})
 if isinstance(route, dict) and "default_domain_resolver" in route:
@@ -837,10 +847,12 @@ if any(
 ):
     raise SystemExit("ASSERT FAIL: iOS default connectivity mode should not force QUIC reject")
 dns_rules = dns.get("rules", [])
-if not any(isinstance(item, dict) and item.get("query_type") == "HTTPS" and item.get("server") == "block-dns" for item in dns_rules):
-    raise SystemExit("ASSERT FAIL: expected iOS dns rule query_type=HTTPS -> block-dns")
-if not any(isinstance(item, dict) and item.get("outbound") == "any" and item.get("server") == "default-dns" for item in dns_rules):
-    raise SystemExit("ASSERT FAIL: expected iOS dns rule outbound=any -> default-dns")
+if any(isinstance(item, dict) and item.get("outbound") == "any" for item in dns_rules):
+    raise SystemExit("ASSERT FAIL: iOS dns rules should not contain outbound=any fallback")
+if not any(isinstance(item, dict) and item.get("clash_mode") == "direct" and item.get("server") == "default-dns" for item in dns_rules):
+    raise SystemExit("ASSERT FAIL: expected iOS clash_mode=direct -> default-dns")
+if not any(isinstance(item, dict) and item.get("clash_mode") == "global" and item.get("server") == "google" for item in dns_rules):
+    raise SystemExit("ASSERT FAIL: expected iOS clash_mode=global -> google")
 if not any(
     isinstance(item, dict)
     and item.get("server") == "default-dns"
