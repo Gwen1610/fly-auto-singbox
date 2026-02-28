@@ -204,17 +204,17 @@ if route.get("final") != "Proxy":
 rules = route.get("rules")
 if not isinstance(rules, list):
     raise SystemExit("ASSERT FAIL: route.rules is not array")
-if len(rules) < 3:
+if len(rules) < 2:
     raise SystemExit("ASSERT FAIL: expected connectivity rules to be injected by default")
 if not any(isinstance(item, dict) and item.get("action") == "hijack-dns" for item in rules):
     raise SystemExit("ASSERT FAIL: expected hijack-dns rule to be injected")
-if not any(
+if any(
     isinstance(item, dict)
     and item.get("action") == "reject"
     and any(isinstance(rule, dict) and rule.get("protocol") == "quic" for rule in item.get("rules", []))
     for item in rules
 ):
-    raise SystemExit("ASSERT FAIL: expected QUIC reject rule to be injected")
+    raise SystemExit("ASSERT FAIL: default connectivity mode should not force QUIC reject")
 if not any(isinstance(item, dict) and item.get("ip_is_private") is True for item in rules):
     raise SystemExit("ASSERT FAIL: expected private ip direct rule to be injected")
 
@@ -228,6 +228,10 @@ if "A-HongKong" not in hk.get("outbounds", []) or "B-HongKong" not in hk.get("ou
 a_hk = mapping.get("A-HongKong", {})
 if a_hk.get("type") != "urltest":
     raise SystemExit("ASSERT FAIL: expected A-HongKong to be urltest")
+if a_hk.get("interval") != "5m":
+    raise SystemExit("ASSERT FAIL: expected A-HongKong urltest interval=5m")
+if a_hk.get("tolerance") != 50:
+    raise SystemExit("ASSERT FAIL: expected A-HongKong urltest tolerance=50ms")
 
 # Singapore/Japan should auto-pick the fastest node for each provider group by default.
 b_sg = mapping.get("B-Singapore", {})
@@ -246,6 +250,23 @@ if proxy.get("default") != "HongKong":
     raise SystemExit("ASSERT FAIL: Proxy default should follow group strategy default HongKong")
 if "Streaming" not in proxy.get("outbounds", []) or "AI" not in proxy.get("outbounds", []):
     raise SystemExit("ASSERT FAIL: Proxy should include custom groups Streaming/AI")
+PY
+
+./fly build-config --connectivity-mode stable
+python3 - <<'PY'
+import json
+
+with open("./runtime-configs/config.json", "r", encoding="utf-8") as f:
+    cfg = json.load(f)
+
+rules = cfg.get("route", {}).get("rules", [])
+if not any(
+    isinstance(item, dict)
+    and item.get("action") == "reject"
+    and any(isinstance(rule, dict) and rule.get("protocol") == "quic" for rule in item.get("rules", []))
+    for item in rules
+):
+    raise SystemExit("ASSERT FAIL: stable connectivity mode should inject QUIC reject")
 PY
 
 cat > "./build/qx-openai.list" <<'EOF'
@@ -397,13 +418,13 @@ if len(rules) < 7:
     raise SystemExit("ASSERT FAIL: expected generated route rules from build-rules + connectivity rules")
 if not any(isinstance(item, dict) and item.get("action") == "hijack-dns" for item in rules):
     raise SystemExit("ASSERT FAIL: expected hijack-dns rule to be present")
-if not any(
+if any(
     isinstance(item, dict)
     and item.get("action") == "reject"
     and any(isinstance(rule, dict) and rule.get("protocol") == "quic" for rule in item.get("rules", []))
     for item in rules
 ):
-    raise SystemExit("ASSERT FAIL: expected QUIC reject rule to be present")
+    raise SystemExit("ASSERT FAIL: default connectivity mode should not force QUIC reject")
 
 # sing-box 1.11+ deprecates legacy special outbounds (e.g. `block`/`dns`) in route rules.
 for item in rules:
@@ -450,7 +471,7 @@ domain_hit = False
 ip_hit = False
 mixed_hit = False
 for item in rules:
-    if not isinstance(item, dict) or item.get("action") != "direct":
+    if not isinstance(item, dict) or item.get("outbound") != "dns_direct":
         continue
     domain_suffix = item.get("domain_suffix") or []
     ip_cidr = item.get("ip_cidr") or []
@@ -464,9 +485,9 @@ for item in rules:
             mixed_hit = True
 
 if not domain_hit:
-    raise SystemExit("ASSERT FAIL: expected split direct (action=direct) domain_suffix rule for bilibili.com")
+    raise SystemExit("ASSERT FAIL: expected split direct (outbound=dns_direct) domain_suffix rule for bilibili.com")
 if not ip_hit:
-    raise SystemExit("ASSERT FAIL: expected split direct (action=direct) ip_cidr rule for 103.151.151.130/32")
+    raise SystemExit("ASSERT FAIL: expected split direct (outbound=dns_direct) ip_cidr rule for 103.151.151.130/32")
 if mixed_hit:
     raise SystemExit("ASSERT FAIL: mixed matcher rule should be split into separate direct rules")
 PY
@@ -548,6 +569,22 @@ for tag in ("qx-openai", "qx-youtube", "qx-custom", "qx-rejectset"):
     if tag not in tags:
         raise SystemExit(f"ASSERT FAIL: expected {tag} to be present in config.route.rule_set after build-ruleset")
 
+qx_items = [
+    item
+    for item in route_sets
+    if isinstance(item, dict) and isinstance(item.get("tag"), str) and item.get("tag", "").startswith("qx-")
+]
+if not qx_items:
+    raise SystemExit("ASSERT FAIL: expected qx-* rule_set items in desktop config")
+for item in qx_items:
+    tag = item["tag"]
+    if item.get("type") != "local":
+        raise SystemExit(f"ASSERT FAIL: desktop ruleset auto mode should prefer local for {tag}")
+    if not str(item.get("path", "")).endswith(f"/{tag}.srs"):
+        raise SystemExit(f"ASSERT FAIL: desktop local ruleset path mismatch for {tag}: {item.get('path')}")
+    if "url" in item:
+        raise SystemExit(f"ASSERT FAIL: desktop local ruleset should not keep remote url for {tag}")
+
 route = cfg.get("route", {})
 if isinstance(route, dict) and "default_domain_resolver" in route:
     raise SystemExit("ASSERT FAIL: desktop VT config should not include default_domain_resolver")
@@ -575,19 +612,38 @@ if dns.get("final") != "google":
     raise SystemExit("ASSERT FAIL: expected desktop dns.final=google (Bulianglin style)")
 if dns.get("strategy") != "ipv4_only":
     raise SystemExit("ASSERT FAIL: expected desktop dns.strategy=ipv4_only")
+if dns.get("independent_cache") is not False:
+    raise SystemExit("ASSERT FAIL: expected desktop dns.independent_cache=false")
 
 dns_rules = dns.get("rules", [])
 if not any(isinstance(item, dict) and item.get("query_type") == "HTTPS" and item.get("server") == "block-dns" for item in dns_rules):
     raise SystemExit("ASSERT FAIL: expected dns rule query_type=HTTPS -> block-dns")
 if not any(isinstance(item, dict) and item.get("outbound") == "any" and item.get("server") == "default-dns" for item in dns_rules):
     raise SystemExit("ASSERT FAIL: expected dns rule outbound=any -> default-dns")
+if not any(
+    isinstance(item, dict)
+    and item.get("server") == "default-dns"
+    and any(isinstance(rule, dict) and rule.get("domain_suffix") == "cn" for rule in item.get("rules", []))
+    for item in dns_rules
+):
+    raise SystemExit("ASSERT FAIL: expected dns cn suffix rule -> default-dns")
+if not any(
+    isinstance(item, dict)
+    and item.get("server") == "default-dns"
+    and (
+        "ruc.edu.cn" in (item.get("domain") or [])
+        or any(isinstance(rule, dict) and rule.get("domain_suffix") == "ruc.edu.cn" for rule in item.get("rules", []))
+    )
+    for item in dns_rules
+):
+    raise SystemExit("ASSERT FAIL: expected direct domain hints to prefer default-dns")
 if not any(isinstance(item, dict) and item.get("rule_set") in ("geosite-cn", "cnsite", "qx-china") and item.get("server") == "default-dns" for item in dns_rules):
     raise SystemExit("ASSERT FAIL: expected dns rule_set=cnsite/geosite-cn/qx-china -> default-dns")
 
 route_rules = route.get("rules", [])
 cn_direct_rules = [
     item for item in route_rules
-    if isinstance(item, dict) and item.get("action") == "direct" and item.get("rule_set") == ["geosite-cn", "geoip-cn"]
+    if isinstance(item, dict) and item.get("outbound") == "dns_direct" and item.get("rule_set") == ["geosite-cn", "geoip-cn"]
 ]
 if len(cn_direct_rules) != 1:
     raise SystemExit(f"ASSERT FAIL: expected exactly one CN direct route rule, got {len(cn_direct_rules)}")
@@ -630,12 +686,31 @@ if "address" in server_by_tag["default-dns"]:
     raise SystemExit("ASSERT FAIL: expected terminal profile to avoid legacy dns address field on managed servers")
 if server_by_tag["default-dns"].get("detour") in {"dns_direct", "direct"}:
     raise SystemExit("ASSERT FAIL: terminal default-dns should not detour to direct-type outbound (startup fatal in 1.12+)")
+if dns.get("independent_cache") is not False:
+    raise SystemExit("ASSERT FAIL: expected terminal dns.independent_cache=false")
 
 rules = dns.get("rules", [])
 if any(isinstance(item, dict) and item.get("outbound") == "any" for item in rules):
     raise SystemExit("ASSERT FAIL: expected terminal profile dns.rules to avoid deprecated outbound=any item")
 if not any(isinstance(item, dict) and item.get("query_type") == "HTTPS" and item.get("action") == "predefined" for item in rules):
     raise SystemExit("ASSERT FAIL: expected terminal profile query_type HTTPS predefined action rule")
+if not any(
+    isinstance(item, dict)
+    and item.get("server") == "default-dns"
+    and any(isinstance(rule, dict) and rule.get("domain_suffix") == "cn" for rule in item.get("rules", []))
+    for item in rules
+):
+    raise SystemExit("ASSERT FAIL: expected terminal dns cn suffix rule -> default-dns")
+if not any(
+    isinstance(item, dict)
+    and item.get("server") == "default-dns"
+    and (
+        "ruc.edu.cn" in (item.get("domain") or [])
+        or any(isinstance(rule, dict) and rule.get("domain_suffix") == "ruc.edu.cn" for rule in item.get("rules", []))
+    )
+    for item in rules
+):
+    raise SystemExit("ASSERT FAIL: expected terminal direct domain hints to prefer default-dns")
 if not any(isinstance(item, dict) and item.get("clash_mode") == "direct" and item.get("server") == "default-dns" for item in rules):
     raise SystemExit("ASSERT FAIL: expected terminal profile clash_mode=direct to use default-dns")
 if any(isinstance(item, dict) and item.get("clash_mode") == "direct" and item.get("server") == "system-dns" for item in rules):
@@ -658,22 +733,34 @@ if tun_in.get("sniff_override_destination") is not True:
 route_rules = route.get("rules", [])
 if not any(isinstance(item, dict) and item.get("action") == "hijack-dns" for item in route_rules):
     raise SystemExit("ASSERT FAIL: expected terminal profile to keep hijack-dns rule")
-if not any(
+if any(
     isinstance(item, dict)
     and item.get("action") == "reject"
     and any(isinstance(rule, dict) and rule.get("protocol") == "quic" for rule in item.get("rules", []))
     for item in route_rules
 ):
-    raise SystemExit("ASSERT FAIL: expected terminal profile to keep QUIC reject rule")
+    raise SystemExit("ASSERT FAIL: terminal default connectivity mode should not force QUIC reject")
 if not any(isinstance(item, dict) and item.get("action") == "resolve" and item.get("inbound") == "mixed-in" for item in route_rules):
     raise SystemExit("ASSERT FAIL: expected terminal profile to add mixed-in resolve rule (avoid system DNS leaks in proxy mode)")
 
 cn_direct_rules = [
     item for item in route_rules
-    if isinstance(item, dict) and item.get("action") == "direct" and item.get("rule_set") == ["geosite-cn", "geoip-cn"]
+    if isinstance(item, dict) and item.get("outbound") == "dns_direct" and item.get("rule_set") == ["geosite-cn", "geoip-cn"]
 ]
 if len(cn_direct_rules) != 1:
     raise SystemExit(f"ASSERT FAIL: expected terminal profile to keep one CN direct route rule, got {len(cn_direct_rules)}")
+
+route_sets = route.get("rule_set", [])
+qx_items = [
+    item
+    for item in route_sets
+    if isinstance(item, dict) and isinstance(item.get("tag"), str) and item.get("tag", "").startswith("qx-")
+]
+if not qx_items:
+    raise SystemExit("ASSERT FAIL: expected qx-* rule_set items in terminal config")
+for item in qx_items:
+    if item.get("type") != "local":
+        raise SystemExit(f"ASSERT FAIL: terminal ruleset auto mode should prefer local for {item.get('tag')}")
 PY
 
 # Simulate a user-modified iOS template that accidentally contains new DNS schema fields.
@@ -735,32 +822,65 @@ if server_by_tag["system-dns"].get("detour") != "dns_direct":
     raise SystemExit("ASSERT FAIL: expected iOS system-dns detour=dns_direct")
 if dns.get("final") != "google":
     raise SystemExit("ASSERT FAIL: expected iOS dns.final=google (Bulianglin style)")
+if dns.get("independent_cache") is not False:
+    raise SystemExit("ASSERT FAIL: expected iOS dns.independent_cache=false")
 
 route = cfg.get("route", {})
 if isinstance(route, dict) and "default_domain_resolver" in route:
     raise SystemExit("ASSERT FAIL: iOS route should not include default_domain_resolver (VT 1.11.4 decode failure)")
 rules = route.get("rules", []) if isinstance(route, dict) else []
-if not any(
+if any(
     isinstance(item, dict)
     and item.get("action") == "reject"
     and any(isinstance(rule, dict) and rule.get("protocol") == "quic" for rule in item.get("rules", []))
     for item in rules
 ):
-    raise SystemExit("ASSERT FAIL: expected iOS VT config to include QUIC reject logical rule")
+    raise SystemExit("ASSERT FAIL: iOS default connectivity mode should not force QUIC reject")
 dns_rules = dns.get("rules", [])
 if not any(isinstance(item, dict) and item.get("query_type") == "HTTPS" and item.get("server") == "block-dns" for item in dns_rules):
     raise SystemExit("ASSERT FAIL: expected iOS dns rule query_type=HTTPS -> block-dns")
 if not any(isinstance(item, dict) and item.get("outbound") == "any" and item.get("server") == "default-dns" for item in dns_rules):
     raise SystemExit("ASSERT FAIL: expected iOS dns rule outbound=any -> default-dns")
+if not any(
+    isinstance(item, dict)
+    and item.get("server") == "default-dns"
+    and any(isinstance(rule, dict) and rule.get("domain_suffix") == "cn" for rule in item.get("rules", []))
+    for item in dns_rules
+):
+    raise SystemExit("ASSERT FAIL: expected iOS dns cn suffix rule -> default-dns")
+if not any(
+    isinstance(item, dict)
+    and item.get("server") == "default-dns"
+    and (
+        "ruc.edu.cn" in (item.get("domain") or [])
+        or any(isinstance(rule, dict) and rule.get("domain_suffix") == "ruc.edu.cn" for rule in item.get("rules", []))
+    )
+    for item in dns_rules
+):
+    raise SystemExit("ASSERT FAIL: expected iOS direct domain hints to prefer default-dns")
 if not any(isinstance(item, dict) and item.get("rule_set") in ("geosite-cn", "cnsite", "qx-china") and item.get("server") == "default-dns" for item in dns_rules):
     raise SystemExit("ASSERT FAIL: expected iOS dns rule_set=cnsite/geosite-cn/qx-china -> default-dns")
 
 cn_direct_rules = [
     item for item in rules
-    if isinstance(item, dict) and item.get("action") == "direct" and item.get("rule_set") == ["geosite-cn", "geoip-cn"]
+    if isinstance(item, dict) and item.get("outbound") == "dns_direct" and item.get("rule_set") == ["geosite-cn", "geoip-cn"]
 ]
 if len(cn_direct_rules) != 1:
     raise SystemExit(f"ASSERT FAIL: expected exactly one iOS CN direct route rule, got {len(cn_direct_rules)}")
+
+route_sets = route.get("rule_set", [])
+qx_items = [
+    item
+    for item in route_sets
+    if isinstance(item, dict) and isinstance(item.get("tag"), str) and item.get("tag", "").startswith("qx-")
+]
+if not qx_items:
+    raise SystemExit("ASSERT FAIL: expected qx-* rule_set items in iOS config")
+for item in qx_items:
+    if item.get("type") != "remote":
+        raise SystemExit(f"ASSERT FAIL: iOS ruleset auto mode should keep remote for {item.get('tag')}")
+    if not str(item.get("url", "")).endswith(f"/{item.get('tag')}.srs"):
+        raise SystemExit(f"ASSERT FAIL: iOS remote ruleset url mismatch for {item.get('tag')}: {item.get('url')}")
 
 # iOS config must NOT contain clash_api (not needed on device, VT 1.11.4 doesn't use it)
 ios_exp = cfg.get("experimental", {})
@@ -868,6 +988,30 @@ if ! printf '%s\n' "${filtered_warn}" | grep -q '^ERROR\['; then
 fi
 if printf '%s\n' "${filtered_warn}" | grep -q '^INFO\['; then
   echo "ASSERT FAIL: INFO should be filtered out at level=warn, got '${filtered_warn}'" >&2
+  exit 1
+fi
+
+cat > "./sing-box.log" <<'EOF'
+INFO[0000] outbound/shadowsocks[HK]: outbound connection to example.com:443
+INFO[0001] normal info
+WARN[0002] outbound/direct[dns_direct]: outbound connection to 1.1.1.1:53
+ERROR[0003] random error
+EOF
+filtered_conn="$(./fly log --no-follow -n 50 --level conn)"
+if ! printf '%s\n' "${filtered_conn}" | grep -q "outbound connection to example.com:443"; then
+  echo "ASSERT FAIL: expected outbound connection line for example.com in conn level, got '${filtered_conn}'" >&2
+  exit 1
+fi
+if ! printf '%s\n' "${filtered_conn}" | grep -q "outbound connection to 1.1.1.1:53"; then
+  echo "ASSERT FAIL: expected outbound connection line for 1.1.1.1 in conn level, got '${filtered_conn}'" >&2
+  exit 1
+fi
+if printf '%s\n' "${filtered_conn}" | grep -q "normal info"; then
+  echo "ASSERT FAIL: conn level should filter non-connection info lines, got '${filtered_conn}'" >&2
+  exit 1
+fi
+if printf '%s\n' "${filtered_conn}" | grep -q "random error"; then
+  echo "ASSERT FAIL: conn level should filter unrelated error lines, got '${filtered_conn}'" >&2
   exit 1
 fi
 

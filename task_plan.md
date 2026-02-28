@@ -423,3 +423,89 @@ $ ./fly delay
 - [x] 对照当前 VT 1.11.4 兼容配置，梳理已实现的防泄露能力与差距
 - [x] 产出借鉴思路文档到 `docs/`
 - **Status:** complete
+
+---
+
+## Session 2026-02-28: direct 分流不生效排障（进行中）
+
+## Goal（当前）
+定位并修复“分流规则中 `direct` 不生效”的根因，输出可验证的参考配置与修正方案。
+
+## Current Phase
+In Progress (Session 2026-02-28 / Phase D1)
+
+### Phase D1: 本地证据采集
+- [ ] 核对 `route-rules` 生成结果与最终 `runtime-configs` 配置中的 `outbound=direct` 规则
+- [ ] 检查规则顺序、matcher 语义与是否被更高优先级规则覆盖
+- **Status:** in_progress
+
+### Phase D2: 运行时命中验证
+- [ ] 从 `sing-box.log` 提取目标域名/IP 的路由决策日志
+- [ ] 确认命中规则 tag 与最终 outbound
+- **Status:** pending
+
+### Phase D3: 外部参考对照
+- [ ] 查阅 sing-box 官方路由规则文档
+- [ ] 检索 GitHub 上相似分流配置（含 `direct` / `Proxy`）
+- [ ] 提取与当前项目差异并形成最小改动建议
+- **Status:** pending
+
+### Phase D1: 本地证据采集
+- [x] 核对 `route-rules` 生成结果与最终 `runtime-configs` 配置中的 `outbound=direct` 规则
+- [x] 检查规则顺序、matcher 语义与是否被更高优先级规则覆盖
+- **Status:** complete
+
+### Phase D2: 运行时命中验证
+- [x] 从 `sing-box.log` 提取目标域名/IP 的路由决策日志
+- [x] 确认命中场景下仍落在代理出站（与预期 direct 不一致）
+- **Status:** complete
+
+### Phase D3: 外部参考对照
+- [x] 查阅 sing-box 官方路由规则文档
+- [x] 检索 GitHub 上相似分流配置（含 `direct` / `Proxy`）
+- [x] 提取与当前项目差异并形成最小改动建议
+- **Status:** complete
+
+### Phase D4: 修复与验证
+- [x] 调整 `build_config.py` 中 direct 规则改写逻辑
+- [x] 更新测试断言并跑通验证
+- **Status:** complete
+
+---
+
+## Phase 28: 体验优先 + 启动可靠性 + 连接日志层级
+
+**目标：**
+1) 落地“体验优先”改造：默认不强制 QUIC reject，同时保留稳定模式开关；  
+2) 落地“启动可靠性”改造：ruleset 模式下桌面端优先引用本地 `.srs`；  
+3) 增加便于实时观测的日志过滤层级（只看 outbound connection）。
+
+### 任务列表
+
+- [x] `build_config.py` 增加 `--connectivity-mode`（`experience|stable`）并接入路由注入逻辑
+- [x] `build_config.py` 增加 `--ruleset-reference-mode`（`auto|remote|local|prefer-local`）与本地 `.srs` 引用改写
+- [x] `fly` 增加 `CONNECTIVITY_MODE` / `RULESET_REFERENCE_MODE` 环境变量与命令参数透传
+- [x] `fly log` 增加 `--level conn`（仅显示 `outbound connection to ...`）
+- [x] 更新 `README.md` 与 `config_template/fly.env.example`
+- [x] 更新并通过 `tests/test_pipeline.sh`（覆盖默认体验模式、stable 模式、ruleset 本地优先、conn 日志层级）
+- **Status:** complete
+
+---
+
+## Phase 29: 网站打开速度优化（DNS + urltest）
+
+**目标：**
+1) 在不回退防泄露逻辑的前提下，提升首开与切换体验；  
+2) 把关键测速参数做成可调；  
+3) 给出可追溯的官方/社区参考依据。
+
+### 任务列表
+
+- [x] DNS 侧优化：新增 `.cn/.中国/.中國` + 命中直连规则域名优先走 `default-dns`（减少首开慢）
+- [x] DNS 侧优化：`dns.independent_cache` 维持 `false`（避免轻微性能损失）
+- [x] urltest 优化：默认 `interval` 从 `10m` 调整为 `5m`，默认 `tolerance=50ms`
+- [x] 新增 `build-config/pipeline` 参数：`--urltest-url/--urltest-interval/--urltest-tolerance`
+- [x] 新增 `fly.env` 模板变量：`URLTEST_URL/URLTEST_INTERVAL/URLTEST_TOLERANCE`
+- [x] 更新测试覆盖与 README 文档
+- [x] 通过验证：`bash -n fly`、`conda run -n yellow python -m py_compile ...`、`bash tests/test_pipeline.sh`
+- **Status:** complete

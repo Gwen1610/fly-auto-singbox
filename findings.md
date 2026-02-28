@@ -268,3 +268,36 @@ curl -s -X PUT "http://127.0.0.1:9090/proxies/HongKong" \
   - 默认 `CONFIG_OUTPUT_DIR=./runtime-configs`
   - `CONFIG_JSON/CONFIG_JSON_IOS/CONFIG_JSON_TERMINAL` 默认全部落在该目录
   - `fly on` 交互扫描目录切换到 `runtime-configs/`，支持自命名 `*.json`。
+
+## 2026-02-28 (direct 分流不生效排障)
+- 用户反馈：分流规则中的 `direct` 全部未生效，已尝试多种方式仍失败。
+- 排障策略：先本地证据采集（配置生成链路 + 运行日志），再对照官方文档和 GitHub 相似配置。
+- 当前待验证假设：
+  1) 规则语义层面：某些规则字段组合导致 AND 语义误匹配或零命中；
+  2) 优先级层面：`direct` 规则位于后序，被更前置规则抢先命中；
+  3) 出站/解析层面：规则命中后因为 DNS/出站配置联动，表现为“看起来仍走代理”。
+
+### 2026-02-28 追加结论（root cause confirmed）
+- 本地证据：`runtime-configs/config*.json` 中用户 `Direct` 规则在 `build_config.py` 阶段被改写为 `action: direct`，而运行日志显示 `www.bilibili.com` / `www.zhihu.com` / `gateway.icloud.com.cn` 等仍走代理节点。
+- 官方文档对照：sing-box 1.11+ 迁移里仅 `block` / `dns` 作为“special outbound”迁移为 action；`direct` 仍应通过 outbound 路由（见 migration 文档 `Route Rule` 段落）。
+- 官方 rule_action 文档显示 `action` 的终结动作是 `route`（带 `outbound` 参数），不存在独立 `action=direct` 语义。
+- GitHub 参考配置（官方仓库 issue 样例）也普遍使用：`{"rule_set": [...], "outbound": "direct"}`。
+- 结论：当前项目把 `direct` 转成 `action: direct` 是核心偏差，导致 direct 分流与官方语义不一致，表现为规则看似存在但不走直连。
+
+## 2026-02-28（体验优先 + 启动可靠性 + log 连接层级）
+- 体验优先：新增 `connectivity_mode`，默认 `experience`（保留 `hijack-dns` + 私网直连，不强制注入 QUIC reject）；`stable` 模式可恢复 QUIC reject。
+- 启动可靠性：新增 `ruleset_reference_mode`，`auto` 下桌面端优先把 `route.rule_set` 的 `qx-*` 远程项改写为本地 `ruleset/<tag>.srs`，减少启动时远程下载失败/超时风险；iOS 仍保持远程 URL。
+- 可观测性：`fly log` 新增 `--level conn`（别名 `outbound`），只输出 `outbound connection to ...` 行，便于实时看“节点连了哪个域名/IP”。
+- 兼容边界：
+  - `ruleset_reference_mode=local` 会在缺少本地 `.srs` 时直接构建失败（fail-fast）。
+  - `prefer-local` 会在本地缺失时回退远程 URL（不中断构建）。
+
+## 2026-02-28（网页速度优化研究与落地）
+- 官方文档确认：`urltest` 支持 `interval`、`tolerance`（用于控制“延迟改善多少才切换”），可用于加快故障/抖动时的节点切换响应。
+- 官方文档确认：DNS 有 `independent_cache`（按 server 独立缓存）；多 resolver 并存场景下可减少缓存串用导致的“命中异常 CDN / 解析行为漂移”。
+- 社区配置（rewired）普遍做法：通过 `geosite-cn`/国内规则把国内域名解析和路由固定到本地链路，减少首开慢与绕路。
+- 本轮落地：
+  - 默认 urltest 从 `10m` 调整到 `5m`，默认 `tolerance=50ms`；
+  - DNS 增加 `.cn`（含中国/中國 punycode）后缀优先 `default-dns`；
+  - DNS 增加“命中直连规则的域名优先 `default-dns`”提示规则，减少首开慢；
+  - `dns.independent_cache` 维持 `false`（避免轻微性能损失）。

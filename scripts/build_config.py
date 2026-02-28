@@ -9,7 +9,8 @@ from pathlib import Path
 
 URLTEST_REGIONS = {"HongKong", "Singapore", "Japan"}
 URLTEST_URL = "https://www.gstatic.com/generate_204"
-URLTEST_INTERVAL = "10m"
+URLTEST_INTERVAL = "5m"
+URLTEST_TOLERANCE = 50
 
 GOOGLE_DNS_SUFFIXES = [
     "google.com",
@@ -22,6 +23,12 @@ GOOGLE_DNS_SUFFIXES = [
     "ggpht.com",
     "github.com",
     "githubusercontent.com",
+]
+
+CN_DNS_SUFFIXES = [
+    "cn",
+    "xn--fiqs8s",
+    "xn--fiqz9s",
 ]
 
 REGION_PATTERNS = OrderedDict(
@@ -219,6 +226,114 @@ def normalize_outbound(raw):
     if not value:
         return value
     return OUTBOUND_ALIAS.get(value.lower(), value)
+
+
+def normalize_connectivity_mode(raw: str) -> str:
+    value = str(raw or "").strip().lower()
+    if value in {"experience", "exp", "fast"}:
+        return "experience"
+    if value in {"stable", "stability", "reliable", "compat"}:
+        return "stable"
+    raise RuntimeError(f"unsupported connectivity mode: {raw}")
+
+
+def normalize_ruleset_reference_mode(raw: str) -> str:
+    value = str(raw or "").strip().lower()
+    if value in {"auto", "remote", "local", "prefer-local"}:
+        return value
+    raise RuntimeError(f"unsupported ruleset reference mode: {raw}")
+
+
+def normalize_urltest_tolerance(raw) -> int:
+    try:
+        value = int(raw)
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError(f"invalid urltest tolerance: {raw}") from exc
+    if value < 0:
+        raise RuntimeError(f"invalid urltest tolerance: {raw}")
+    return value
+
+
+def make_domain_suffix_rule(server: str, suffixes):
+    normalized = []
+    seen = set()
+    for suffix in suffixes:
+        text = str(suffix or "").strip().lower().lstrip(".")
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        normalized.append(text)
+    if not normalized:
+        return None
+    return {
+        "type": "logical",
+        "mode": "or",
+        "rules": [{"domain_suffix": suffix} for suffix in normalized],
+        "server": server,
+    }
+
+
+def make_domain_rule(server: str, domains):
+    normalized = []
+    seen = set()
+    for domain in domains:
+        text = str(domain or "").strip().lower().lstrip(".")
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        normalized.append(text)
+    if not normalized:
+        return None
+    return {"domain": normalized, "server": server}
+
+
+def collect_direct_route_domain_hints(config):
+    route = config.get("route", {})
+    if not isinstance(route, dict):
+        return [], []
+
+    route_rules = route.get("rules", [])
+    if not isinstance(route_rules, list):
+        return [], []
+
+    suffixes = set()
+    domains = set()
+
+    def collect_matchers(rule_obj):
+        if not isinstance(rule_obj, dict):
+            return
+        domain_suffix = rule_obj.get("domain_suffix")
+        if isinstance(domain_suffix, str):
+            text = domain_suffix.strip()
+            if text:
+                suffixes.add(text)
+        elif isinstance(domain_suffix, list):
+            for item in domain_suffix:
+                if isinstance(item, str) and item.strip():
+                    suffixes.add(item.strip())
+
+        domain = rule_obj.get("domain")
+        if isinstance(domain, str):
+            text = domain.strip()
+            if text:
+                domains.add(text)
+        elif isinstance(domain, list):
+            for item in domain:
+                if isinstance(item, str) and item.strip():
+                    domains.add(item.strip())
+
+    for item in route_rules:
+        if not isinstance(item, dict):
+            continue
+        outbound = normalize_outbound(item.get("outbound"))
+        if outbound not in {VT_DNS_DIRECT_TAG, "direct"}:
+            continue
+        collect_matchers(item)
+        if item.get("type") == "logical":
+            for sub_rule in item.get("rules", []):
+                collect_matchers(sub_rule)
+
+    return sorted(suffixes), sorted(domains)
 
 
 def strip_internal_fields(node):
@@ -462,25 +577,24 @@ def ensure_connectivity_dns(config, outbounds):
         dns["rules"] = rules
 
     node_suffixes = collect_node_domain_suffixes(outbounds)
+    direct_suffixes, direct_domains = collect_direct_route_domain_hints(config)
     prefix_rules = []
 
-    if node_suffixes:
-        prefix_rules.append(
-            {
-                "type": "logical",
-                "mode": "or",
-                "rules": [{"domain_suffix": suffix} for suffix in node_suffixes],
-                "server": "default-dns",
-            }
-        )
-    prefix_rules.append(
-        {
-            "type": "logical",
-            "mode": "or",
-            "rules": [{"domain_suffix": suffix} for suffix in GOOGLE_DNS_SUFFIXES],
-            "server": "google",
-        }
-    )
+    node_bootstrap_rule = make_domain_suffix_rule("default-dns", node_suffixes)
+    if node_bootstrap_rule:
+        prefix_rules.append(node_bootstrap_rule)
+    direct_suffix_rule = make_domain_suffix_rule("default-dns", direct_suffixes)
+    if direct_suffix_rule:
+        prefix_rules.append(direct_suffix_rule)
+    direct_domain_rule = make_domain_rule("default-dns", direct_domains)
+    if direct_domain_rule:
+        prefix_rules.append(direct_domain_rule)
+    cn_tld_rule = make_domain_suffix_rule("default-dns", CN_DNS_SUFFIXES)
+    if cn_tld_rule:
+        prefix_rules.append(cn_tld_rule)
+    google_suffix_rule = make_domain_suffix_rule("google", GOOGLE_DNS_SUFFIXES)
+    if google_suffix_rule:
+        prefix_rules.append(google_suffix_rule)
 
     cn_dns_rule = None
     route_rule_sets = config.get("route", {}).get("rule_set", [])
@@ -623,24 +737,23 @@ def ensure_connectivity_dns_terminal(config, outbounds):
         dns["rules"] = rules
 
     node_suffixes = collect_node_domain_suffixes(outbounds)
+    direct_suffixes, direct_domains = collect_direct_route_domain_hints(config)
     prefix_rules = []
-    if node_suffixes:
-        prefix_rules.append(
-            {
-                "type": "logical",
-                "mode": "or",
-                "rules": [{"domain_suffix": suffix} for suffix in node_suffixes],
-                "server": "default-dns",
-            }
-        )
-    prefix_rules.append(
-        {
-            "type": "logical",
-            "mode": "or",
-            "rules": [{"domain_suffix": suffix} for suffix in GOOGLE_DNS_SUFFIXES],
-            "server": "google",
-        }
-    )
+    node_bootstrap_rule = make_domain_suffix_rule("default-dns", node_suffixes)
+    if node_bootstrap_rule:
+        prefix_rules.append(node_bootstrap_rule)
+    direct_suffix_rule = make_domain_suffix_rule("default-dns", direct_suffixes)
+    if direct_suffix_rule:
+        prefix_rules.append(direct_suffix_rule)
+    direct_domain_rule = make_domain_rule("default-dns", direct_domains)
+    if direct_domain_rule:
+        prefix_rules.append(direct_domain_rule)
+    cn_tld_rule = make_domain_suffix_rule("default-dns", CN_DNS_SUFFIXES)
+    if cn_tld_rule:
+        prefix_rules.append(cn_tld_rule)
+    google_suffix_rule = make_domain_suffix_rule("google", GOOGLE_DNS_SUFFIXES)
+    if google_suffix_rule:
+        prefix_rules.append(google_suffix_rule)
 
     cn_dns_rule = None
     route_rule_sets = config.get("route", {}).get("rule_set", [])
@@ -733,13 +846,14 @@ def ensure_terminal_outbound_domain_resolver(outbounds):
                 outbound.setdefault("domain_resolver", "default-dns")
 
 
-def ensure_connectivity_route(config, user_rules, compat_profile="vt"):
+def ensure_connectivity_route(config, user_rules, compat_profile="vt", connectivity_mode="experience"):
     route = config.get("route")
     if not isinstance(route, dict):
         route = {}
         config["route"] = route
 
     profile = str(compat_profile).strip().lower()
+    mode = normalize_connectivity_mode(connectivity_mode)
     # NOTE:
     # - VT 1.11.x: this field is unknown and causes decode failure.
     # - Terminal profile: keep DNS behavior close to VT by configuring
@@ -753,16 +867,19 @@ def ensure_connectivity_route(config, user_rules, compat_profile="vt"):
             "rules": [{"protocol": "dns"}, {"port": 53}],
             "action": "hijack-dns",
         },
-        {
-            "type": "logical",
-            "mode": "or",
-            "rules": [{"protocol": "quic"}, {"network": "udp", "port": 443}],
-            "action": "reject",
-        },
-        {"ip_is_private": True, "action": "direct"},
     ]
+    if mode == "stable":
+        base_rules.append(
+            {
+                "type": "logical",
+                "mode": "or",
+                "rules": [{"protocol": "quic"}, {"network": "udp", "port": 443}],
+                "action": "reject",
+            }
+        )
     if profile == "terminal":
-        base_rules.insert(2, {"inbound": "mixed-in", "action": "resolve"})
+        base_rules.append({"inbound": "mixed-in", "action": "resolve"})
+    base_rules.append({"ip_is_private": True, "outbound": VT_DNS_DIRECT_TAG})
 
     route_rule_sets = route.get("rule_set")
     cn_route_tags = []
@@ -792,7 +909,7 @@ def ensure_connectivity_route(config, user_rules, compat_profile="vt"):
         cn_rule_set_value = cn_route_tags if len(cn_route_tags) > 1 else cn_route_tags[0]
         cn_route_rule = {
             "rule_set": cn_rule_set_value,
-            "action": "direct",
+            "outbound": VT_DNS_DIRECT_TAG,
         }
         # Check if any existing rule already covers these rule_set tags (list or string format)
         cn_set = set(cn_route_tags)
@@ -806,11 +923,59 @@ def ensure_connectivity_route(config, user_rules, compat_profile="vt"):
     return combined
 
 
-def ensure_connectivity_route_ios(config, user_rules):
-    return ensure_connectivity_route(config, user_rules, compat_profile="vt")
+def ensure_connectivity_route_ios(config, user_rules, connectivity_mode="experience"):
+    return ensure_connectivity_route(config, user_rules, compat_profile="vt", connectivity_mode=connectivity_mode)
 
 
-def build_outbounds(grouped, strategy):
+def rewrite_ruleset_references(rule_sets, target="desktop", mode="auto", ruleset_dir="./ruleset"):
+    normalized_mode = normalize_ruleset_reference_mode(mode)
+    target_name = str(target).strip().lower()
+    if normalized_mode == "auto":
+        normalized_mode = "prefer-local" if target_name == "desktop" else "remote"
+
+    if normalized_mode == "remote":
+        return rule_sets
+
+    ruleset_root = Path(ruleset_dir).expanduser().resolve()
+    rewritten = []
+    missing_paths = []
+    for item in rule_sets:
+        if not isinstance(item, dict):
+            rewritten.append(item)
+            continue
+
+        tag = item.get("tag")
+        if not isinstance(tag, str) or not tag.strip():
+            rewritten.append(item)
+            continue
+
+        local_path = (ruleset_root / f"{tag}.srs").resolve()
+        if local_path.is_file():
+            copied = deepcopy(item)
+            copied["type"] = "local"
+            copied["format"] = "binary"
+            copied["path"] = str(local_path)
+            copied.pop("url", None)
+            copied.pop("download_detour", None)
+            copied.pop("detour", None)
+            copied.pop("update_interval", None)
+            copied.pop("update_interval_seconds", None)
+            rewritten.append(copied)
+            continue
+
+        if normalized_mode == "local":
+            missing_paths.append(str(local_path))
+        rewritten.append(item)
+
+    if missing_paths:
+        preview = ", ".join(missing_paths[:4])
+        if len(missing_paths) > 4:
+            preview += ", ..."
+        raise RuntimeError(f"ruleset local files missing for local mode: {preview}")
+    return rewritten
+
+
+def build_outbounds(grouped, strategy, urltest_url=URLTEST_URL, urltest_interval=URLTEST_INTERVAL, urltest_tolerance=URLTEST_TOLERANCE):
     selectors = []
     node_outbounds = []
     available_selector_tags = set()
@@ -826,15 +991,16 @@ def build_outbounds(grouped, strategy):
 
             source_region_tag = make_provider_region_tag(provider, region)
             if region in URLTEST_REGIONS:
-                selectors.append(
-                    {
-                        "tag": source_region_tag,
-                        "type": "urltest",
-                        "outbounds": node_tags,
-                        "url": URLTEST_URL,
-                        "interval": URLTEST_INTERVAL,
-                    }
-                )
+                item = {
+                    "tag": source_region_tag,
+                    "type": "urltest",
+                    "outbounds": node_tags,
+                    "url": urltest_url,
+                    "interval": urltest_interval,
+                }
+                if int(urltest_tolerance) > 0:
+                    item["tolerance"] = int(urltest_tolerance)
+                selectors.append(item)
             else:
                 selectors.append(
                     {
@@ -996,8 +1162,8 @@ def validate_rules(rules_cfg, outbound_tags):
         for current_rule in expanded_rules:
             outbound = normalize_outbound(current_rule.get("outbound"))
             if outbound:
-                # Migrate legacy outbound aliases to rule actions:
-                # block -> action=reject, dns -> action=hijack-dns, direct -> action=direct
+                # Migrate legacy special outbounds to route actions:
+                # block -> action=reject, dns -> action=hijack-dns
                 if outbound == "block":
                     current_rule.pop("outbound", None)
                     current_rule.setdefault("action", "reject")
@@ -1007,9 +1173,11 @@ def validate_rules(rules_cfg, outbound_tags):
                     current_rule.setdefault("action", "hijack-dns")
                     outbound = ""
                 elif outbound == "direct":
-                    current_rule.pop("outbound", None)
-                    current_rule.setdefault("action", "direct")
-                    outbound = ""
+                    mapped_direct = VT_DNS_DIRECT_TAG if VT_DNS_DIRECT_TAG in outbound_tags else "direct"
+                    current_rule["outbound"] = mapped_direct
+                    outbound = mapped_direct
+                    if outbound not in outbound_tags:
+                        raise RuntimeError(f"rules[{index}] outbound not found: {outbound}")
                 else:
                     if "outbound" in current_rule:
                         current_rule["outbound"] = outbound
@@ -1025,7 +1193,18 @@ def validate_rules(rules_cfg, outbound_tags):
     return final, normalized_rules
 
 
-def build_config(base_template, outbounds, final_outbound, rules, extra_rule_sets=None, target="desktop", compat_profile="vt"):
+def build_config(
+    base_template,
+    outbounds,
+    final_outbound,
+    rules,
+    extra_rule_sets=None,
+    target="desktop",
+    compat_profile="vt",
+    connectivity_mode="experience",
+    ruleset_reference_mode="auto",
+    ruleset_dir="./ruleset",
+):
     config = deepcopy(base_template)
     if "inbounds" not in config:
         raise RuntimeError("base template must contain inbounds")
@@ -1073,15 +1252,22 @@ def build_config(base_template, outbounds, final_outbound, rules, extra_rule_set
 
     route_base["final"] = final_outbound
     route_base.pop("default_domain_resolver", None)
-    route_base["rule_set"] = existing_rule_sets
+    route_base["rule_set"] = rewrite_ruleset_references(
+        existing_rule_sets,
+        target=target,
+        mode=ruleset_reference_mode,
+        ruleset_dir=ruleset_dir,
+    )
     config["route"] = route_base
     if str(target).strip().lower() == "ios":
         route_base.pop("default_domain_resolver", None)
-        route_base["rules"] = ensure_connectivity_route_ios(config, rules)
+        route_base["rules"] = ensure_connectivity_route_ios(config, rules, connectivity_mode=connectivity_mode)
     elif profile == "terminal":
-        route_base["rules"] = ensure_connectivity_route(config, rules, compat_profile="terminal")
+        route_base["rules"] = ensure_connectivity_route(
+            config, rules, compat_profile="terminal", connectivity_mode=connectivity_mode
+        )
     else:
-        route_base["rules"] = ensure_connectivity_route(config, rules, compat_profile="vt")
+        route_base["rules"] = ensure_connectivity_route(config, rules, compat_profile="vt", connectivity_mode=connectivity_mode)
 
     config["outbounds"] = outbounds
     if profile == "terminal":
@@ -1115,6 +1301,39 @@ def main():
         action="store_true",
         help="Write compact JSON (no indentation). Useful when some clients are slow or crash on large configs.",
     )
+    parser.add_argument(
+        "--connectivity-mode",
+        choices=["experience", "stable"],
+        default="experience",
+        help="experience: keep DNS hijack/private routing without forced QUIC reject; stable: keep QUIC reject rule.",
+    )
+    parser.add_argument(
+        "--ruleset-reference-mode",
+        choices=["auto", "remote", "local", "prefer-local"],
+        default="auto",
+        help="auto: desktop prefer local .srs and iOS keep remote URLs; remote/local force one mode globally.",
+    )
+    parser.add_argument(
+        "--ruleset-dir",
+        default="./ruleset",
+        help="Ruleset directory used for local .srs references when ruleset-reference-mode includes local.",
+    )
+    parser.add_argument(
+        "--urltest-url",
+        default=URLTEST_URL,
+        help="Probe URL for urltest outbounds.",
+    )
+    parser.add_argument(
+        "--urltest-interval",
+        default=URLTEST_INTERVAL,
+        help="Probe interval for urltest outbounds (e.g. 5m).",
+    )
+    parser.add_argument(
+        "--urltest-tolerance",
+        type=int,
+        default=URLTEST_TOLERANCE,
+        help="urltest tolerance in ms (0 means disabled).",
+    )
     args = parser.parse_args()
 
     nodes = load_json(Path(args.nodes_file).resolve())
@@ -1123,7 +1342,14 @@ def main():
 
     grouped = group_nodes_by_region_and_provider(nodes)
     groups_cfg = load_group_strategy(Path(args.groups_file).resolve())
-    outbounds = build_outbounds(grouped, groups_cfg)
+    urltest_tolerance = normalize_urltest_tolerance(args.urltest_tolerance)
+    outbounds = build_outbounds(
+        grouped,
+        groups_cfg,
+        urltest_url=str(args.urltest_url).strip() or URLTEST_URL,
+        urltest_interval=str(args.urltest_interval).strip() or URLTEST_INTERVAL,
+        urltest_tolerance=urltest_tolerance,
+    )
     outbound_tags = {item.get("tag") for item in outbounds if isinstance(item, dict)}
 
     rules_cfg = load_json(Path(args.rules_file).resolve())
@@ -1139,6 +1365,9 @@ def main():
         extra_rule_sets=extra_rule_sets,
         target=args.target,
         compat_profile=args.compat_profile,
+        connectivity_mode=args.connectivity_mode,
+        ruleset_reference_mode=args.ruleset_reference_mode,
+        ruleset_dir=args.ruleset_dir,
     )
     output_path = Path(args.output_file).resolve()
     output_path.parent.mkdir(parents=True, exist_ok=True)

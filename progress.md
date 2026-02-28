@@ -163,3 +163,47 @@
   - ruleset JSON：`rules[]` 按 matcher 拆分（而不是合并成 1 条）。
   - `build-rules --ruleset` 输出包含 `publish-ruleset` 提示。
 - [x] 验证通过：`bash -n fly`、`python3 -m py_compile scripts/build_route_rules.py`、`bash tests/test_pipeline.sh`。
+
+## Session 2026-02-28（direct 分流不生效排障）
+- [x] 加载 `superpowers:systematic-debugging`。
+- [x] 加载 `planning-with-files/skills/planning-with-files`。
+- [x] 检查项目根目录与三文件状态，确认沿用现有 planning 文件。
+- [x] 记录本次排障目标、阶段与假设。
+- [ ] 开始本地配置链路取证（进行中）。
+
+## Session 2026-02-28（direct 分流不生效排障）
+- [x] 本地证据确认：`direct` 在构建阶段被转换为 `action: direct`。
+- [x] 文档核对：确认 sing-box 官方语义中 `direct` 应走 outbound（`block/dns` 才是 special outbound action 迁移）。
+- [x] 代码修复：`scripts/build_config.py` 改为将 `direct` 规则映射为 `outbound=dns_direct`（保持现有 DNS 直连专用 outbound 设计）。
+- [x] 代码修复：连通性注入规则中的直连项（`ip_is_private`、CN rule_set）改为 `outbound=dns_direct`。
+- [x] 测试更新：`tests/test_pipeline.sh` 断言从 `action=direct` 调整为 `outbound=dns_direct`。
+- [x] 验证通过：`bash -n fly && bash tests/test_pipeline.sh`。
+
+## Session 2026-02-28（体验优先 + 启动可靠性 + 连接日志层级）
+- [x] `scripts/build_config.py` 新增 `--connectivity-mode experience|stable`，默认 `experience`（不强制 QUIC reject），`stable` 可恢复 QUIC reject。
+- [x] `scripts/build_config.py` 新增 `--ruleset-reference-mode auto|remote|local|prefer-local` + `--ruleset-dir`：
+  - `auto`：桌面端优先本地 `.srs`，iOS 维持远程 URL。
+- [x] `fly` 接入新参数与环境变量：
+  - `CONNECTIVITY_MODE`（默认 `experience`）
+  - `RULESET_REFERENCE_MODE`（默认 `auto`）
+  - `build-config` / `pipeline` 均支持透传。
+- [x] `fly log` 新增 `--level conn`（别名 `outbound`），只显示 `outbound connection to ...`。
+- [x] 更新 `README.md` 与 `config_template/fly.env.example` 使用说明。
+- [x] 更新并通过验证：
+  - `bash -n fly`
+  - `conda run -n yellow python -m py_compile scripts/build_config.py scripts/build_route_rules.py scripts/extract_nodes.py`
+  - `bash tests/test_pipeline.sh`
+
+## Session 2026-02-28（网页打开速度优化）
+- [x] `scripts/build_config.py`
+  - DNS：`independent_cache=false`（保持性能优先）
+  - DNS：新增 `.cn/.中国/.中國` 后缀优先走 `default-dns`
+  - DNS：新增“命中直连规则域名优先 `default-dns`”提示规则（改善首开慢）
+  - urltest：默认 `interval=5m`，默认 `tolerance=50`
+  - 新增 CLI 参数：`--urltest-url/--urltest-interval/--urltest-tolerance`
+- [x] `fly`
+  - 新增环境变量默认：`URLTEST_URL`、`URLTEST_INTERVAL`、`URLTEST_TOLERANCE`
+  - `build-config` / `pipeline` 支持同名参数透传
+  - `usage` 帮助文本同步更新
+- [x] `config_template/fly.env.example` 与 `README.md` 同步更新
+- [x] 测试更新并通过：`bash tests/test_pipeline.sh`

@@ -1,5 +1,33 @@
 # Fly Auto Sing-box
 
+以 `./fly` 为统一入口，完成 `sing-box` 的安装、节点提取、QX/Clash 规则转换、配置生成、启动与运行态控制（`select / delay / monitor / log`）。
+
+## 快速导航
+
+- [1. 依赖](#1-依赖)
+- [2. 初始化](#2-初始化)
+- [3. 先检查是否已安装 sing-box](#3-先检查是否已安装-sing-box)
+- [4. 自动安装 sing-box](#4-自动安装-sing-box)
+- [5. 订阅链接填哪里](#5-订阅链接填哪里)
+- [6. 提取节点（只提 US/HK/SG/JP，不加分流）](#6-提取节点只提-ushksgjp不加分流)
+- [7. 规则构建（QX/Clash -> route-rules，可选）](#7-规则构建qxclash---route-rules可选)
+- [8. 注入分流规则生成最终配置](#8-注入分流规则生成最终配置)
+- [9. 分组设计哲学（分层选择器）](#9-分组设计哲学分层选择器)
+- [10. 启停与日志](#10-启停与日志)
+- [11. 配置文件作用](#11-配置文件作用)
+- [12. 实时交互命令（sing-box 运行中使用）](#12-实时交互命令sing-box-运行中使用)
+- [13. Future Work](#13-future-work)
+- [14. 测试](#14-测试)
+- [15. 署名](#15-署名)
+
+## 推荐执行顺序
+
+1. `./fly init` 初始化本地配置。
+2. `./fly extract` 提取节点。
+3. `./fly build-rules`（或 `--ruleset`）生成分流规则。
+4. `./fly build-config`（可 `--interactive`）生成目标配置。
+5. `./fly on` 启动，`./fly select` / `./fly log` / `./fly monitor` 运行中调试。
+
 ## 1. 依赖
 
 ```bash
@@ -106,7 +134,7 @@ sing-box version
   - 先检查你的订阅节点名称是否包含地区关键词（例如 `US01`、`HK`、`SGP`、`JP`、`美国`、`香港`、`新加坡`、`日本`）。
   - 报错里会输出 sample tags，可据此判断命名是否可识别。
 
-## 7. 从 QX/Clash 规则生成 route-rules.json（可选）
+## 7. 规则构建（QX/Clash -> route-rules，可选）
 
 先编辑 `config/rule-sources.json`。
 
@@ -132,17 +160,21 @@ sing-box version
 }
 ```
 
+### 7.1 生成 Inline 规则（默认）
+
 生成命令：
 
 ```bash
 ./fly build-rules
 ```
 
-如果你想用交互方式选择是否启用 Rule Set（数字键选择）：
+如果你想用交互方式选择 Rule Set / Inline（数字键选择）：
 
 ```bash
 ./fly build-rules --interactive
 ```
+
+### 7.2 生成 Rule Set（.srs）并引用
 
 如果你希望在 iOS/VT 等客户端避免“内联大规则导致 config.json 过大/启动失败”，可以选择把 QX 规则**编译成 sing-box rule-set（.srs）并在配置里引用 URL**（生成一个更小的 ruleset 规则文件 `config/route-rules.ruleset.json`）：
 
@@ -162,13 +194,28 @@ sing-box version
 ./fly build-config --target ios --ruleset
 ```
 
+交互模式下（`./fly build-rules --interactive`），若选择 Rule Set，会在构建后继续询问是否立即执行 `./fly publish-ruleset`（`git add/commit/push ruleset/`）。
+
 也可以不改 `fly.env`，直接传参：
 
 ```bash
 ./fly build-rules --ruleset --base-url "https://raw.githubusercontent.com/<user>/<repo>/main/ruleset"
 ```
 
-说明：
+### 7.3 Rule Set 引用策略（启动可靠性）
+
+- `RULESET_REFERENCE_MODE` 默认是 `auto`：
+  - 桌面端（`--target desktop`）优先引用本地 `ruleset/*.srs`，减少启动时对远程下载的依赖；
+  - iOS（`--target ios`）保持远程 URL，便于直接导入客户端使用。
+- 可选值：
+  - `auto`：桌面优先本地，iOS 远程
+  - `remote`：始终远程
+  - `local`：始终本地（缺文件直接构建失败）
+  - `prefer-local`：有本地则本地，否则回退远程
+- 临时覆盖示例：
+  - `./fly build-config --ruleset --ruleset-reference-mode local`
+
+### 7.4 说明
 
 - `build-rules --ruleset` 会为每个启用的 `sources[].url` 生成一个 `rule_set` 标签（默认前缀 `qx-`）。
 - 当 `sources[].tag` 含中文/特殊字符导致无法生成稳定 slug 时，会自动回退为 `qx-source-<hash>`，避免文件名冲突且更稳定。
@@ -197,7 +244,7 @@ sing-box version
   - `./fly build-rules --compact`
   - `./fly build-config --compact`
 
-`rule_set` 示例（无需下载/展开大列表）：
+### 7.5 `rule_set` 示例（无需下载/展开大列表）
 
 ```json
 {
@@ -222,11 +269,12 @@ sing-box version
 ./fly build-config --interactive
 ```
 
-交互顺序：
+交互顺序（`./fly build-config --interactive`）：
 
-1. 第一层：`iOS` / `电脑端`
-2. 第二层：`有 Rule Set` / `无 Rule Set`
-3. （仅电脑端）第三层：`VT 客户端兼容（1.11.4）` / `终端内核兼容（1.12+）`
+1. 第 1 步：`移动端（sing-box VT，内核 1.11.4）` / `桌面端`
+2. 第 2 步：`Rule Set（.srs）` / `Inline（内联规则）`
+3. （仅 Rule Set）第 3 步：`ruleset-reference-mode`（`auto/remote/local/prefer-local`）
+4. （仅桌面端）最后一步：`UI 版（VT 1.11.4）` / `终端版（CLI 1.12+）`
 
 如果你使用了 ruleset 规则（`./fly build-rules --ruleset`），则运行：
 
@@ -267,7 +315,9 @@ sing-box version
 另外，`build-config` 会为“实际可用性”注入一些默认行为（无需你手改 `runtime-configs/config*.json`）：
 
 - 为 `tun`/`mixed` 入站开启 `sniff` 与 `sniff_override_destination`（改善按域名/协议识别体验）。
-- 在 `route.rules` 前置注入 `hijack-dns`（接管系统 DNS）、QUIC `reject`（`protocol=quic` / `udp:443`）、以及 `ip_is_private -> direct`。
+- 在 `route.rules` 前置注入 `hijack-dns`（接管系统 DNS）和 `ip_is_private -> direct`。
+- `CONNECTIVITY_MODE=experience`（默认）不强制注入 QUIC `reject`；如需稳定优先，可用 `CONNECTIVITY_MODE=stable` 或 `./fly build-config --connectivity-mode stable` 注入 `protocol=quic` / `udp:443` 的 `reject` 规则。
+- DNS 提速细节（默认开启）：会为 `.cn/.中国/.中國` 以及命中直连规则的域名优先使用 `default-dns`，减少国内站点首开等待与异常 CDN 命中。
 - 在 `dns` 中注入 `local` 与 `google` 两个 server，并通过规则实现“节点域名 bootstrap 走 local”和“Google/YouTube 域名走 google”。
 
 > 注：以上“默认注入”以 `--target desktop` 为准；`--target ios` 会使用更保守的注入策略（更贴近 VT `1.11.4` 的兼容性需求）。
@@ -298,6 +348,14 @@ sing-box version
 ./fly menu
 ```
 
+工作台菜单当前包含 5 个入口：
+
+1. 提取节点（`extract`）
+2. 生成规则（`build-rules`，继续选择 Rule Set / Inline）
+3. 构建配置（`build-config`，继续选择平台/模式/版本）
+4. 一键流水线（`pipeline`）
+5. 查看日志（`fly log`，默认出站连接视图）
+
 如果你想一步生成 ruleset 规则 + ruleset 配置：
 
 ```bash
@@ -322,7 +380,8 @@ sing-box version
 
 - `HongKong`/`Singapore`/`Japan` 的来源+地区组使用 `urltest`（自动选最快）。
 - `America` 的来源+地区组保持 `selector`（手动选择）。
-- `urltest` 会按配置里的 `url` 周期性测速并自动更新选择（当前默认 `https://www.gstatic.com/generate_204`，间隔 `10m`）。
+- `urltest` 会按配置里的 `url` 周期性测速并自动更新选择（当前默认 `https://www.gstatic.com/generate_204`，间隔 `5m`，`tolerance=50ms`）。
+- 你可以在 `config/fly.env` 调整：`URLTEST_URL`、`URLTEST_INTERVAL`、`URLTEST_TOLERANCE`，或在命令行临时覆盖 `./fly build-config --urltest-interval 3m --urltest-tolerance 80`。
 
 2. 地区聚合层  
 例如 `HongKong` 组会包含 `M78-HongKong`、`TAG-HongKong`，默认值由 `group-strategy` 里的 `region_defaults` 决定（例如默认 `M78-HongKong`）。
@@ -411,13 +470,18 @@ macOS 说明（终端 tun 模式 DNS 泄露）：
 日志：
 
 ```bash
-./fly log  # 交互终端下会先选择显示等级（all/info/warn/error/fatal）
+./fly log  # 默认直接进入精简视图（conn：仅 outbound connection）
 # 或指定显示等级（仅影响 fly log 输出过滤，不会改写 config 里的 log.level）
 ./fly log --level warn
+./fly log --level conn         # 仅显示 "outbound connection to ..." 连接去向
 ./fly log --level error --no-follow -n 200
-# 如不希望弹出交互菜单：
+# 如需手动选择日志视图（出站连接 / WARN+ / ERROR+ / 全部）：
+./fly log --interactive
+# 非交互脚本场景可显式关闭交互：
 ./fly log --no-interactive
 ```
+
+日志默认级别可在 `config/fly.env` 设置 `LOG_DEFAULT_LEVEL`（默认 `conn`）。
 
 关键运行文件：
 

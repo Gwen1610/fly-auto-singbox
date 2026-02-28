@@ -118,14 +118,14 @@ Usage:
   ./fly build-ruleset [--base-url url] [--ruleset-dir dir] [--skip-compile]  # alias of build-rules --ruleset
   ./fly publish-ruleset [--message msg] [--dry-run]
   ./fly extract
-  ./fly build-config [--target desktop|ios] [--profile vt|terminal] [--ruleset] [--compact] [--interactive]
-  ./fly pipeline [--target desktop|ios] [--profile vt|terminal] [--ruleset] [--compact] [--interactive]
+  ./fly build-config [--target desktop|ios] [--profile vt|terminal] [--ruleset] [--connectivity-mode experience|stable] [--ruleset-reference-mode auto|remote|local|prefer-local] [--urltest-url url] [--urltest-interval dur] [--urltest-tolerance ms] [--compact] [--interactive]
+  ./fly pipeline [--target desktop|ios] [--profile vt|terminal] [--ruleset] [--connectivity-mode experience|stable] [--ruleset-reference-mode auto|remote|local|prefer-local] [--urltest-url url] [--urltest-interval dur] [--urltest-tolerance ms] [--compact] [--interactive]
   ./fly interactive
   ./fly menu    # alias of interactive
   ./fly on [--config path] [--interactive]
   ./fly off
   ./fly status
-  ./fly log [-n lines] [--level all|info|warn|error|fatal] [--no-follow] [--interactive]
+  ./fly log [-n lines] [--level all|info|warn|error|fatal|conn] [--no-follow] [--interactive]
   ./fly select [group-name]
   ./fly delay [group-name]
   ./fly monitor
@@ -201,8 +201,13 @@ load_env() {
     CONFIG_JSON_TERMINAL="${CONFIG_OUTPUT_DIR}/config.terminal.json"
   fi
   : "${DESKTOP_PROFILE_DEFAULT:=vt}"
+  : "${CONNECTIVITY_MODE:=experience}"
+  : "${URLTEST_URL:=https://www.gstatic.com/generate_204}"
+  : "${URLTEST_INTERVAL:=5m}"
+  : "${URLTEST_TOLERANCE:=50}"
   : "${RULESET_BASE_URL:=}"
   : "${RULESET_DIR:=./ruleset}"
+  : "${RULESET_REFERENCE_MODE:=auto}"
   : "${RULESET_DOWNLOAD_DETOUR:=Proxy}"
   : "${RULESET_TAG_PREFIX:=qx-}"
   : "${PID_FILE:=./.sing-box.pid}"
@@ -213,6 +218,7 @@ load_env() {
   : "${API_HOST:=127.0.0.1:9090}"
   : "${API_SECRET:=}"
   : "${MACOS_DNS_GUARD:=true}"
+  : "${MACOS_DNS_GUARD_WATCHDOG:=true}"
 
   EXTRACT_PROVIDERS_FILE="$(abs_path "${EXTRACT_PROVIDERS_FILE}")"
   RULE_SOURCES_FILE="$(abs_path "${RULE_SOURCES_FILE}")"
@@ -846,20 +852,23 @@ get_terminal_core_version_hint() {
 _FLY_BUILD_TARGET="desktop"
 _FLY_BUILD_RULESET="false"
 _FLY_BUILD_PROFILE="vt"
+_FLY_BUILD_RULESET_REFERENCE_MODE="auto"
 
 fly_tui_choose_build_mode() {
   local target_default="${1:-desktop}"
   local ruleset_default="${2:-false}"
   local profile_default="${3:-vt}"
+  local ruleset_reference_mode_default="${4:-auto}"
 
   _FLY_BUILD_TARGET="${target_default}"
   _FLY_BUILD_RULESET="${ruleset_default}"
   _FLY_BUILD_PROFILE="${profile_default}"
+  _FLY_BUILD_RULESET_REFERENCE_MODE="${ruleset_reference_mode_default}"
 
-  _fly_tui_title "配置生成向导 · 第1步 选择平台"
-  _fly_tui_option "1" "iOS（VT 1.11.4）" ""
-  _fly_tui_option "2" "电脑端" ""
-  _fly_tui_prompt "选择平台"
+  _fly_tui_title "配置生成向导 · 第1步 选择终端平台"
+  _fly_tui_option "1" "移动端（sing-box VT）" "内核 1.11.4"
+  _fly_tui_option "2" "桌面端" "继续选择 UI 版或终端版"
+  _fly_tui_prompt "选择终端平台"
   local selected="${_FLY_TUI_RESULT}"
   [[ "${selected}" == "q" ]] && return 1
   if [[ "${selected}" == "1" ]]; then
@@ -869,10 +878,10 @@ fly_tui_choose_build_mode() {
     _FLY_BUILD_TARGET="desktop"
   fi
 
-  _fly_tui_title "配置生成向导 · 第2步 Rule Set 模式"
-  _fly_tui_option "1" "有 Rule Set（远程 .srs）" "更小配置"
-  _fly_tui_option "2" "无 Rule Set（内联规则）" "直观可读"
-  _fly_tui_prompt "选择规则模式"
+  _fly_tui_title "配置生成向导 · 第2步 规则构建模式"
+  _fly_tui_option "1" "Rule Set（.srs 规则集）" "推荐：配置更小、启动更稳"
+  _fly_tui_option "2" "Inline（内联规则）" "规则直接写入配置，便于阅读"
+  _fly_tui_prompt "选择规则构建模式"
   selected="${_FLY_TUI_RESULT}"
   [[ "${selected}" == "q" ]] && return 1
   if [[ "${selected}" == "1" ]]; then
@@ -881,13 +890,35 @@ fly_tui_choose_build_mode() {
     _FLY_BUILD_RULESET="false"
   fi
 
+  if [[ "${_FLY_BUILD_RULESET}" == "true" ]]; then
+    _fly_tui_title "配置生成向导 · 第3步 Rule Set 引用策略"
+    _fly_tui_option "1" "自动（推荐）" "桌面端优先本地，移动端优先远程"
+    _fly_tui_option "2" "远程 URL" "始终引用远程 .srs 链接"
+    _fly_tui_option "3" "本地文件" "始终引用本地 .srs，缺失即报错"
+    _fly_tui_option "4" "本地优先" "本地存在则使用，本地缺失回退远程"
+    _fly_tui_prompt "选择 Rule Set 引用策略"
+    selected="${_FLY_TUI_RESULT}"
+    [[ "${selected}" == "q" ]] && return 1
+    case "${selected}" in
+      1) _FLY_BUILD_RULESET_REFERENCE_MODE="auto" ;;
+      2) _FLY_BUILD_RULESET_REFERENCE_MODE="remote" ;;
+      3) _FLY_BUILD_RULESET_REFERENCE_MODE="local" ;;
+      4) _FLY_BUILD_RULESET_REFERENCE_MODE="prefer-local" ;;
+      *) return 1 ;;
+    esac
+  fi
+
   if [[ "${_FLY_BUILD_TARGET}" == "desktop" ]]; then
     local terminal_ver=""
     terminal_ver="$(get_terminal_core_version_hint)"
-    _fly_tui_title "配置生成向导 · 第3步 电脑端内核兼容"
-    _fly_tui_option "1" "VT 客户端兼容" "核心 1.11.4（无告警）"
-    _fly_tui_option "2" "终端内核兼容" "当前检测 ${terminal_ver}"
-    _fly_tui_prompt "选择兼容方案"
+    if [[ "${_FLY_BUILD_RULESET}" == "true" ]]; then
+      _fly_tui_title "配置生成向导 · 第4步 桌面端版本"
+    else
+      _fly_tui_title "配置生成向导 · 第3步 桌面端版本"
+    fi
+    _fly_tui_option "1" "UI 版（sing-box VT）" "内核 1.11.4（无兼容告警）"
+    _fly_tui_option "2" "终端版（CLI）" "当前检测内核 ${terminal_ver}"
+    _fly_tui_prompt "选择桌面端版本"
     selected="${_FLY_TUI_RESULT}"
     [[ "${selected}" == "q" ]] && return 1
     if [[ "${selected}" == "1" ]]; then
@@ -903,10 +934,10 @@ fly_tui_choose_build_mode() {
 fly_tui_choose_rules_mode() {
   local default_ruleset="${1:-false}"
   _FLY_BUILD_RULESET="${default_ruleset}"
-  _fly_tui_title "规则构建向导 · Rule Set 模式"
-  _fly_tui_option "1" "有 Rule Set（远程 .srs）" "适合 iOS/小体积"
-  _fly_tui_option "2" "无 Rule Set（内联规则）" "便于本地预览"
-  _fly_tui_prompt "选择规则模式"
+  _fly_tui_title "规则构建向导 · 规则构建模式"
+  _fly_tui_option "1" "Rule Set（.srs 规则集）" "推荐：配置更小，适合移动端"
+  _fly_tui_option "2" "Inline（内联规则）" "规则直接写入配置，便于调试"
+  _fly_tui_prompt "选择规则构建模式"
   local selected="${_FLY_TUI_RESULT}"
   [[ "${selected}" == "q" ]] && return 1
   if [[ "${selected}" == "1" ]]; then
@@ -918,10 +949,10 @@ fly_tui_choose_rules_mode() {
 }
 
 fly_tui_confirm_publish_ruleset() {
-  _fly_tui_title "规则构建完成 · 是否发布到 GitHub"
+  _fly_tui_title "规则构建完成 · 是否发布 Rule Set 到 GitHub"
   _fly_tui_option "1" "否" ""
-  _fly_tui_option "2" "是，执行 publish-ruleset" "git add/commit/push ruleset/"
-  _fly_tui_prompt "是否现在发布"
+  _fly_tui_option "2" "是，立即发布" "执行 git add/commit/push ruleset/"
+  _fly_tui_prompt "是否立即发布"
   local selected="${_FLY_TUI_RESULT}"
   if [[ "${selected}" == "2" ]]; then
     return 0
@@ -961,9 +992,9 @@ fly_tui_choose_on_config() {
     local label="${display[$idx]}"
     local meta=""
     case "${label}" in
-      config.json) meta="桌面 VT 默认" ;;
-      config.terminal.json) meta="桌面终端 1.12+" ;;
-      config.ios.json) meta="iOS VT" ;;
+      config.json) meta="桌面端 · UI 版（VT 内核 1.11.4）" ;;
+      config.terminal.json) meta="桌面端 · 终端版（CLI 内核 1.12+）" ;;
+      config.ios.json) meta="移动端 · VT 内核 1.11.4" ;;
     esac
     _fly_tui_option "${sym}" "${label}" "${meta}"
     selected_files+=("${files[$idx]}")
@@ -992,21 +1023,19 @@ fly_tui_choose_log_level() {
   local default_level="${1:-all}"
   _FLY_LOG_LEVEL_RESULT="${default_level}"
 
-  _fly_tui_title "fly log — 选择显示等级"
-  _fly_tui_option "1" "全部" "DEBUG/INFO/WARN/ERROR/FATAL"
-  _fly_tui_option "2" "INFO+" ""
-  _fly_tui_option "3" "WARN+" "更干净"
-  _fly_tui_option "4" "ERROR+" ""
-  _fly_tui_option "5" "FATAL" ""
-  _fly_tui_prompt "选择等级"
+  _fly_tui_title "fly log — 选择日志视图"
+  _fly_tui_option "1" "出站连接视图（推荐）" "仅显示 outbound connection to ... 去向"
+  _fly_tui_option "2" "WARN 及以上" "常用排障视图"
+  _fly_tui_option "3" "ERROR 及以上" "仅看错误"
+  _fly_tui_option "4" "全部日志" "DEBUG/INFO/WARN/ERROR/FATAL"
+  _fly_tui_prompt "选择日志视图"
   local selected="${_FLY_TUI_RESULT}"
   [[ "${selected}" == "q" ]] && return 1
   case "${selected}" in
-    1) _FLY_LOG_LEVEL_RESULT="all" ;;
-    2) _FLY_LOG_LEVEL_RESULT="info" ;;
-    3) _FLY_LOG_LEVEL_RESULT="warn" ;;
-    4) _FLY_LOG_LEVEL_RESULT="error" ;;
-    5) _FLY_LOG_LEVEL_RESULT="fatal" ;;
+    1) _FLY_LOG_LEVEL_RESULT="conn" ;;
+    2) _FLY_LOG_LEVEL_RESULT="warn" ;;
+    3) _FLY_LOG_LEVEL_RESULT="error" ;;
+    4) _FLY_LOG_LEVEL_RESULT="all" ;;
     *) return 1 ;;
   esac
   return 0
@@ -1577,6 +1606,11 @@ cmd_build_config() {
   local target_explicit="false"
   local profile="${DESKTOP_PROFILE_DEFAULT}"
   local profile_explicit="false"
+  local connectivity_mode="${CONNECTIVITY_MODE}"
+  local ruleset_reference_mode="${RULESET_REFERENCE_MODE}"
+  local urltest_url="${URLTEST_URL}"
+  local urltest_interval="${URLTEST_INTERVAL}"
+  local urltest_tolerance="${URLTEST_TOLERANCE}"
   local compact="false"
   local interactive="auto"
   while [[ $# -gt 0 ]]; do
@@ -1602,6 +1636,31 @@ cmd_build_config() {
         profile="$1"
         profile_explicit="true"
         ;;
+      --connectivity-mode)
+        shift
+        [[ $# -gt 0 ]] || die "missing value for --connectivity-mode"
+        connectivity_mode="$1"
+        ;;
+      --ruleset-reference-mode)
+        shift
+        [[ $# -gt 0 ]] || die "missing value for --ruleset-reference-mode"
+        ruleset_reference_mode="$1"
+        ;;
+      --urltest-url)
+        shift
+        [[ $# -gt 0 ]] || die "missing value for --urltest-url"
+        urltest_url="$1"
+        ;;
+      --urltest-interval)
+        shift
+        [[ $# -gt 0 ]] || die "missing value for --urltest-interval"
+        urltest_interval="$1"
+        ;;
+      --urltest-tolerance)
+        shift
+        [[ $# -gt 0 ]] || die "missing value for --urltest-tolerance"
+        urltest_tolerance="$1"
+        ;;
       --interactive)
         interactive="true"
         ;;
@@ -1626,15 +1685,21 @@ cmd_build_config() {
     fi
   fi
   if is_true "${interactive}"; then
-    fly_tui_choose_build_mode "${target}" "${ruleset}" "${profile}" || die "cancelled by user"
+    fly_tui_choose_build_mode "${target}" "${ruleset}" "${profile}" "${ruleset_reference_mode}" || die "cancelled by user"
     target="${_FLY_BUILD_TARGET}"
     ruleset="${_FLY_BUILD_RULESET}"
     profile="${_FLY_BUILD_PROFILE}"
-    log "interactive selected: target=${target}, ruleset=${ruleset}, profile=${profile}"
+    ruleset_reference_mode="${_FLY_BUILD_RULESET_REFERENCE_MODE}"
+    log "interactive selected: target=${target}, ruleset=${ruleset}, ruleset_reference_mode=${ruleset_reference_mode}, profile=${profile}"
   fi
 
   [[ "${target}" =~ ^(desktop|ios)$ ]] || die "unsupported --target: ${target} (use desktop|ios)"
   [[ "${profile}" =~ ^(vt|terminal)$ ]] || die "unsupported --profile: ${profile} (use vt|terminal)"
+  [[ "${connectivity_mode}" =~ ^(experience|stable)$ ]] || die "unsupported --connectivity-mode: ${connectivity_mode} (use experience|stable)"
+  [[ "${ruleset_reference_mode}" =~ ^(auto|remote|local|prefer-local)$ ]] || die "unsupported --ruleset-reference-mode: ${ruleset_reference_mode} (use auto|remote|local|prefer-local)"
+  [[ -n "${urltest_url}" ]] || die "empty --urltest-url"
+  [[ -n "${urltest_interval}" ]] || die "empty --urltest-interval"
+  [[ "${urltest_tolerance}" =~ ^[0-9]+$ ]] || die "invalid --urltest-tolerance: ${urltest_tolerance}"
   if [[ "${target}" == "ios" ]]; then
     profile="vt"
   fi
@@ -1667,6 +1732,12 @@ cmd_build_config() {
     --output-file "${output_file}"
     --target "${target}"
     --compat-profile "${profile}"
+    --connectivity-mode "${connectivity_mode}"
+    --ruleset-reference-mode "${ruleset_reference_mode}"
+    --ruleset-dir "${RULESET_DIR}"
+    --urltest-url "${urltest_url}"
+    --urltest-interval "${urltest_interval}"
+    --urltest-tolerance "${urltest_tolerance}"
   )
   if is_true "${compact}"; then
     cmd+=(--compact)
@@ -1781,6 +1852,11 @@ cmd_pipeline() {
   local target_explicit="false"
   local profile="${DESKTOP_PROFILE_DEFAULT}"
   local profile_explicit="false"
+  local connectivity_mode="${CONNECTIVITY_MODE}"
+  local ruleset_reference_mode="${RULESET_REFERENCE_MODE}"
+  local urltest_url="${URLTEST_URL}"
+  local urltest_interval="${URLTEST_INTERVAL}"
+  local urltest_tolerance="${URLTEST_TOLERANCE}"
   local compact="false"
   local interactive="auto"
   while [[ $# -gt 0 ]]; do
@@ -1806,6 +1882,31 @@ cmd_pipeline() {
         profile="$1"
         profile_explicit="true"
         ;;
+      --connectivity-mode)
+        shift
+        [[ $# -gt 0 ]] || die "missing value for --connectivity-mode"
+        connectivity_mode="$1"
+        ;;
+      --ruleset-reference-mode)
+        shift
+        [[ $# -gt 0 ]] || die "missing value for --ruleset-reference-mode"
+        ruleset_reference_mode="$1"
+        ;;
+      --urltest-url)
+        shift
+        [[ $# -gt 0 ]] || die "missing value for --urltest-url"
+        urltest_url="$1"
+        ;;
+      --urltest-interval)
+        shift
+        [[ $# -gt 0 ]] || die "missing value for --urltest-interval"
+        urltest_interval="$1"
+        ;;
+      --urltest-tolerance)
+        shift
+        [[ $# -gt 0 ]] || die "missing value for --urltest-tolerance"
+        urltest_tolerance="$1"
+        ;;
       --interactive)
         interactive="true"
         ;;
@@ -1830,27 +1931,33 @@ cmd_pipeline() {
     fi
   fi
   if is_true "${interactive}"; then
-    fly_tui_choose_build_mode "${target}" "${ruleset}" "${profile}" || die "cancelled by user"
+    fly_tui_choose_build_mode "${target}" "${ruleset}" "${profile}" "${ruleset_reference_mode}" || die "cancelled by user"
     target="${_FLY_BUILD_TARGET}"
     ruleset="${_FLY_BUILD_RULESET}"
     profile="${_FLY_BUILD_PROFILE}"
-    log "interactive selected: target=${target}, ruleset=${ruleset}, profile=${profile}"
+    ruleset_reference_mode="${_FLY_BUILD_RULESET_REFERENCE_MODE}"
+    log "interactive selected: target=${target}, ruleset=${ruleset}, ruleset_reference_mode=${ruleset_reference_mode}, profile=${profile}"
   fi
+  [[ "${connectivity_mode}" =~ ^(experience|stable)$ ]] || die "unsupported --connectivity-mode: ${connectivity_mode} (use experience|stable)"
+  [[ "${ruleset_reference_mode}" =~ ^(auto|remote|local|prefer-local)$ ]] || die "unsupported --ruleset-reference-mode: ${ruleset_reference_mode} (use auto|remote|local|prefer-local)"
+  [[ -n "${urltest_url}" ]] || die "empty --urltest-url"
+  [[ -n "${urltest_interval}" ]] || die "empty --urltest-interval"
+  [[ "${urltest_tolerance}" =~ ^[0-9]+$ ]] || die "invalid --urltest-tolerance: ${urltest_tolerance}"
 
   cmd_extract
   if is_true "${ruleset}"; then
     if is_true "${compact}"; then
       cmd_build_rules --ruleset --compact
-      cmd_build_config --ruleset --target "${target}" --profile "${profile}" --compact
+      cmd_build_config --ruleset --target "${target}" --profile "${profile}" --connectivity-mode "${connectivity_mode}" --ruleset-reference-mode "${ruleset_reference_mode}" --urltest-url "${urltest_url}" --urltest-interval "${urltest_interval}" --urltest-tolerance "${urltest_tolerance}" --compact
     else
       cmd_build_rules --ruleset
-      cmd_build_config --ruleset --target "${target}" --profile "${profile}"
+      cmd_build_config --ruleset --target "${target}" --profile "${profile}" --connectivity-mode "${connectivity_mode}" --ruleset-reference-mode "${ruleset_reference_mode}" --urltest-url "${urltest_url}" --urltest-interval "${urltest_interval}" --urltest-tolerance "${urltest_tolerance}"
     fi
   else
     if is_true "${compact}"; then
-      cmd_build_config --target "${target}" --profile "${profile}" --compact
+      cmd_build_config --target "${target}" --profile "${profile}" --connectivity-mode "${connectivity_mode}" --ruleset-reference-mode "${ruleset_reference_mode}" --urltest-url "${urltest_url}" --urltest-interval "${urltest_interval}" --urltest-tolerance "${urltest_tolerance}" --compact
     else
-      cmd_build_config --target "${target}" --profile "${profile}"
+      cmd_build_config --target "${target}" --profile "${profile}" --connectivity-mode "${connectivity_mode}" --ruleset-reference-mode "${ruleset_reference_mode}" --urltest-url "${urltest_url}" --urltest-interval "${urltest_interval}" --urltest-tolerance "${urltest_tolerance}"
     fi
   fi
 }
@@ -1870,9 +1977,10 @@ cmd_interactive() {
   while true; do
     _fly_tui_title "fly 配置工作台"
     _fly_tui_option "1" "提取节点 (extract)" "输出 build/nodes.json"
-    _fly_tui_option "2" "生成规则 (build-rules)" "继续交互选择 Rule Set/inline"
-    _fly_tui_option "3" "构建配置 (build-config)" "继续交互选择平台/Rule Set/兼容档位"
+    _fly_tui_option "2" "生成规则 (build-rules)" "继续选择 Rule Set / Inline 模式"
+    _fly_tui_option "3" "构建配置 (build-config)" "继续选择终端平台 / Rule Set / 版本策略"
     _fly_tui_option "4" "一键流水线 (pipeline)" "extract + build-rules/build-config"
+    _fly_tui_option "5" "查看日志 (fly log)" "默认进入出站连接视图（精简）"
     _fly_tui_prompt "选择操作"
     local selected="${_FLY_TUI_RESULT}"
     [[ "${selected}" == "q" ]] && return 0
@@ -1889,6 +1997,9 @@ cmd_interactive() {
         ;;
       4)
         cmd_pipeline --interactive || true
+        ;;
+      5)
+        cmd_log --no-interactive || true
         ;;
     esac
     _fly_wait_continue
@@ -2067,11 +2178,21 @@ BEGIN {
 }'
 }
 
+fly_log_filter_connection() {
+  awk '
+{
+  if (index($0, "outbound/") > 0 && index($0, ": outbound connection to ") > 0) {
+    print $0
+    fflush()
+  }
+}'
+}
+
 cmd_log() {
   load_env
   local lines="200"
   local follow="true"
-  local level=""
+  local level="${LOG_DEFAULT_LEVEL:-conn}"
   local interactive="auto"
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -2104,15 +2225,11 @@ cmd_log() {
   [[ -f "${LOG_FILE}" ]] || die "missing log file: ${LOG_FILE}"
 
   if [[ "${interactive}" == "auto" ]]; then
-    if fly_can_tui && [[ -z "${level}" ]]; then
-      interactive="true"
-    else
-      interactive="false"
-    fi
+    interactive="false"
   fi
 
   if is_true "${interactive}"; then
-    if fly_tui_choose_log_level "warn"; then
+    if fly_tui_choose_log_level "${level}"; then
       level="${_FLY_LOG_LEVEL_RESULT}"
     else
       return 0
@@ -2124,19 +2241,23 @@ cmd_log() {
   fi
   case "${level}" in
     ""|all|debug) level="all" ;;
-    info|warn|error|fatal) ;;
-    *) die "invalid --level value: ${level} (expected all|info|warn|error|fatal)" ;;
+    info|warn|error|fatal|conn|outbound) ;;
+    *) die "invalid --level value: ${level} (expected all|info|warn|error|fatal|conn)" ;;
   esac
 
   if is_true "${follow}"; then
     if [[ "${level}" == "all" ]]; then
       tail -n "${lines}" -f "${LOG_FILE}"
+    elif [[ "${level}" == "conn" || "${level}" == "outbound" ]]; then
+      tail -n "${lines}" -f "${LOG_FILE}" | fly_log_filter_connection || true
     else
       tail -n "${lines}" -f "${LOG_FILE}" | fly_log_filter_by_level "${level}" || true
     fi
   else
     if [[ "${level}" == "all" ]]; then
       tail -n "${lines}" "${LOG_FILE}"
+    elif [[ "${level}" == "conn" || "${level}" == "outbound" ]]; then
+      tail -n "${lines}" "${LOG_FILE}" | fly_log_filter_connection || true
     else
       tail -n "${lines}" "${LOG_FILE}" | fly_log_filter_by_level "${level}" || true
     fi
