@@ -1030,6 +1030,39 @@ def ensure_terminal_outbound_domain_resolver(outbounds):
                 outbound.setdefault("domain_resolver", "default-dns")
 
 
+def inject_v2ray_api(config, outbounds):
+    """Inject experimental.v2ray_api block for gRPC traffic stats (desktop/terminal only).
+
+    Stats track all selector and urltest outbound groups.
+    Skips injection if v2ray_api is already defined in the template.
+    Default listen address: 127.0.0.1:8081 (separate from Clash API on 9090).
+    """
+    experimental = config.setdefault("experimental", {})
+    if "v2ray_api" in experimental:
+        return  # user already configured it; don't overwrite
+
+    inbound_tags = [
+        ib.get("tag")
+        for ib in config.get("inbounds", [])
+        if isinstance(ib, dict) and ib.get("tag")
+    ]
+    stats_outbound_tags = [
+        ob.get("tag")
+        for ob in outbounds
+        if isinstance(ob, dict)
+        and ob.get("type") in {"selector", "urltest"}
+        and ob.get("tag")
+    ]
+    experimental["v2ray_api"] = {
+        "listen": "127.0.0.1:8081",
+        "stats": {
+            "enabled": True,
+            "inbounds": inbound_tags,
+            "outbounds": stats_outbound_tags,
+        },
+    }
+
+
 def ensure_connectivity_route(config, user_rules, compat_profile="vt", connectivity_mode="experience", process_rules=None):
     route = config.get("route")
     if not isinstance(route, dict):
@@ -1469,6 +1502,8 @@ def build_config(
     if profile == "terminal":
         ensure_terminal_outbound_domain_resolver(config["outbounds"])
     ensure_inbound_sniff(config, compat_profile=profile)
+    if enable_v2ray_api and str(target).strip().lower() != "ios":
+        inject_v2ray_api(config, outbounds)
     if str(target).strip().lower() == "ios":
         ensure_connectivity_dns_ios(config, outbounds)
     elif profile == "terminal":
