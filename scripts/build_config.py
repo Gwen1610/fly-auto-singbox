@@ -1030,7 +1030,7 @@ def ensure_terminal_outbound_domain_resolver(outbounds):
                 outbound.setdefault("domain_resolver", "default-dns")
 
 
-def ensure_connectivity_route(config, user_rules, compat_profile="vt", connectivity_mode="experience"):
+def ensure_connectivity_route(config, user_rules, compat_profile="vt", connectivity_mode="experience", process_rules=None):
     route = config.get("route")
     if not isinstance(route, dict):
         route = {}
@@ -1087,6 +1087,8 @@ def ensure_connectivity_route(config, user_rules, compat_profile="vt", connectiv
     for item in base_rules:
         if json.dumps(item, ensure_ascii=False, sort_keys=True) not in existing:
             combined.append(item)
+    if process_rules:
+        combined.extend(process_rules)
     combined.extend(user_rules)
 
     if cn_route_tags:
@@ -1388,6 +1390,8 @@ def build_config(
     connectivity_mode="experience",
     ruleset_reference_mode="auto",
     ruleset_dir="./ruleset",
+    process_rules=None,
+    enable_v2ray_api=False,
 ):
     config = deepcopy(base_template)
     if "inbounds" not in config:
@@ -1443,15 +1447,23 @@ def build_config(
         ruleset_dir=ruleset_dir,
     )
     config["route"] = route_base
+    # Inject find_process for desktop/terminal when process rules are present.
+    # iOS does not support process-based routing.
+    if process_rules and str(target).strip().lower() != "ios":
+        route_base["find_process"] = True
     if str(target).strip().lower() == "ios":
         route_base.pop("default_domain_resolver", None)
         route_base["rules"] = ensure_connectivity_route_ios(config, rules, connectivity_mode=connectivity_mode)
     elif profile == "terminal":
         route_base["rules"] = ensure_connectivity_route(
-            config, rules, compat_profile="terminal", connectivity_mode=connectivity_mode
+            config, rules, compat_profile="terminal", connectivity_mode=connectivity_mode,
+            process_rules=process_rules,
         )
     else:
-        route_base["rules"] = ensure_connectivity_route(config, rules, compat_profile="vt", connectivity_mode=connectivity_mode)
+        route_base["rules"] = ensure_connectivity_route(
+            config, rules, compat_profile="vt", connectivity_mode=connectivity_mode,
+            process_rules=process_rules,
+        )
 
     config["outbounds"] = outbounds
     if profile == "terminal":
@@ -1518,6 +1530,18 @@ def main():
         default=URLTEST_TOLERANCE,
         help="urltest tolerance in ms (0 means disabled).",
     )
+    parser.add_argument(
+        "--process-rules-file",
+        default="",
+        help="Optional path to process-name routing rules JSON (config/process-rules.json). "
+             "Skipped for iOS target. Injects process_name rules before domain/geo rules.",
+    )
+    parser.add_argument(
+        "--enable-v2ray-api",
+        action="store_true",
+        default=False,
+        help="Inject experimental.v2ray_api block (gRPC stats on 127.0.0.1:8081) into desktop/terminal configs.",
+    )
     args = parser.parse_args()
 
     nodes = load_json(Path(args.nodes_file).resolve())
@@ -1536,6 +1560,14 @@ def main():
     )
     outbound_tags = {item.get("tag") for item in outbounds if isinstance(item, dict)}
 
+    process_rules = []
+    if args.process_rules_file:
+        process_rules_path = Path(args.process_rules_file).resolve()
+        raw_process_rules = load_process_rules(process_rules_path)
+        process_rules = validate_process_rules(raw_process_rules, outbound_tags)
+        if process_rules:
+            print(f"loaded {len(process_rules)} process rule(s) from {process_rules_path}")
+
     rules_cfg = load_json(Path(args.rules_file).resolve())
     extra_rule_sets = rules_cfg.get("rule_set")
     final_outbound, rules = validate_rules(rules_cfg, outbound_tags)
@@ -1552,6 +1584,8 @@ def main():
         connectivity_mode=args.connectivity_mode,
         ruleset_reference_mode=args.ruleset_reference_mode,
         ruleset_dir=args.ruleset_dir,
+        process_rules=process_rules,
+        enable_v2ray_api=args.enable_v2ray_api,
     )
     output_path = Path(args.output_file).resolve()
     output_path.parent.mkdir(parents=True, exist_ok=True)
