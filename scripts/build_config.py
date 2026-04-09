@@ -437,6 +437,61 @@ def load_group_strategy(path: Path):
     }
 
 
+def load_process_rules(path: Path):
+    """Load process-name routing rules from config/process-rules.json.
+
+    Returns an empty list if the file does not exist (feature is optional).
+    Each rule must have at least one of: process_name, process_path, process_path_regex.
+    """
+    if not path.is_file():
+        return []
+    cfg = load_json(path)
+    if not isinstance(cfg, dict):
+        raise RuntimeError("process-rules file must be a JSON object")
+    rules = cfg.get("rules", [])
+    if not isinstance(rules, list):
+        raise RuntimeError("process-rules.rules must be an array")
+    validated = []
+    for i, rule in enumerate(rules):
+        if not isinstance(rule, dict):
+            raise RuntimeError(f"process-rules.rules[{i}] must be object")
+        has_matcher = any(
+            rule.get(k) for k in ("process_name", "process_path", "process_path_regex")
+        )
+        if not has_matcher:
+            raise RuntimeError(
+                f"process-rules.rules[{i}] must have process_name, process_path, or process_path_regex"
+            )
+        # Strip comment-only entries (pure _comment objects with no matcher)
+        cleaned = {k: v for k, v in rule.items() if not k.startswith("_")}
+        validated.append(cleaned)
+    return validated
+
+
+def validate_process_rules(process_rules, outbound_tags):
+    """Normalize and validate outbound references in process rules.
+
+    Returns a new list with outbound tags normalized (same semantics as validate_rules).
+    """
+    normalized = []
+    for i, rule in enumerate(process_rules):
+        rule = deepcopy(rule)
+        outbound = rule.get("outbound")
+        if outbound:
+            mapped = normalize_outbound(outbound)
+            if mapped == "direct":
+                mapped = VT_DNS_DIRECT_TAG if VT_DNS_DIRECT_TAG in outbound_tags else "direct"
+            if mapped == "block":
+                rule.pop("outbound", None)
+                rule.setdefault("action", "reject")
+            elif mapped not in outbound_tags:
+                raise RuntimeError(f"process-rules.rules[{i}].outbound not found: {outbound}")
+            else:
+                rule["outbound"] = mapped
+        normalized.append(rule)
+    return normalized
+
+
 def is_ip_address(value: str) -> bool:
     # Good enough for our config use: v4 literal or anything containing ':' treated as IP (v6).
     text = str(value).strip()
