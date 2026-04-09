@@ -110,6 +110,20 @@ cat > "./config/group-strategy.json" <<'JSON'
   }
 }
 JSON
+cat > "./config/process-rules.json" <<'JSON'
+{
+  "rules": [
+    {
+      "process_name": ["Google Chrome", "Google Chrome Helper (Renderer)"],
+      "outbound": "Proxy"
+    },
+    {
+      "process_name": ["curl"],
+      "outbound": "dns_direct"
+    }
+  ]
+}
+JSON
 cat > "./config/route-rules.json" <<'JSON'
 {
   "final": "Proxy",
@@ -161,6 +175,7 @@ GROUP_STRATEGY_FILE="./config/group-strategy.json"
 NODES_FILE="./build/nodes.json"
 ROUTE_RULES_FILE="./config/route-rules.json"
 ROUTE_RULES_FILE_RULESET="./config/route-rules.ruleset.json"
+PROCESS_RULES_FILE="./config/process-rules.json"
 BASE_TEMPLATE_FILE="./config/base-template.json"
 BASE_TEMPLATE_FILE_IOS="./config/base-template.ios.json"
 CONFIG_OUTPUT_DIR="./runtime-configs"
@@ -250,6 +265,42 @@ if proxy.get("default") != "HongKong":
     raise SystemExit("ASSERT FAIL: Proxy default should follow group strategy default HongKong")
 if "Streaming" not in proxy.get("outbounds", []) or "AI" not in proxy.get("outbounds", []):
     raise SystemExit("ASSERT FAIL: Proxy should include custom groups Streaming/AI")
+
+# process_name rules assertions
+route = cfg.get("route", {})
+if not route.get("find_process"):
+    raise SystemExit("ASSERT FAIL: route.find_process should be true when process-rules.json is present")
+
+rules = route.get("rules", [])
+has_process_rule = any(
+    isinstance(r, dict) and "process_name" in r
+    for r in rules
+)
+if not has_process_rule:
+    raise SystemExit("ASSERT FAIL: expected process_name rule in route.rules")
+
+hijack_idx = next(
+    (i for i, r in enumerate(rules) if isinstance(r, dict) and r.get("action") == "hijack-dns"),
+    -1
+)
+process_idx = next(
+    (i for i, r in enumerate(rules) if isinstance(r, dict) and "process_name" in r),
+    -1
+)
+if hijack_idx == -1:
+    raise SystemExit("ASSERT FAIL: hijack-dns rule not found")
+if process_idx <= hijack_idx:
+    raise SystemExit(f"ASSERT FAIL: process rule (idx={process_idx}) should come after hijack-dns (idx={hijack_idx})")
+
+# v2ray_api assertions
+exp = cfg.get("experimental", {})
+v2ray = exp.get("v2ray_api", {})
+if not v2ray:
+    raise SystemExit("ASSERT FAIL: experimental.v2ray_api should be injected for desktop config")
+if not v2ray.get("stats", {}).get("enabled"):
+    raise SystemExit("ASSERT FAIL: v2ray_api.stats.enabled should be true")
+if "Proxy" not in v2ray.get("stats", {}).get("outbounds", []):
+    raise SystemExit("ASSERT FAIL: v2ray_api.stats.outbounds should include 'Proxy'")
 PY
 
 ./fly build-config --connectivity-mode stable
@@ -898,6 +949,23 @@ for item in qx_items:
 ios_exp = cfg.get("experimental", {})
 if "clash_api" in ios_exp:
     raise SystemExit("ASSERT FAIL: iOS config should not contain experimental.clash_api")
+PY
+
+python3 - <<'PY'
+import json
+
+with open("./runtime-configs/config.ios.json", "r", encoding="utf-8") as f:
+    cfg = json.load(f)
+
+route = cfg.get("route", {})
+if route.get("find_process"):
+    raise SystemExit("ASSERT FAIL: iOS config must NOT have find_process=true")
+
+exp = cfg.get("experimental", {})
+if "v2ray_api" in exp:
+    raise SystemExit("ASSERT FAIL: iOS config must NOT have v2ray_api")
+
+print("iOS restrictions: OK")
 PY
 
 mkdir -p "./ruleset"
