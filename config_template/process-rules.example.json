@@ -1,0 +1,21 @@
+{
+  "_comment": "进程名分流规则 (process_name routing rules)。\n仅在 desktop / terminal 配置生效，iOS 自动忽略。\n\n用法说明：\n  - process_name: macOS/Linux/Windows 进程名，不含路径\n  - outbound: 出站 tag，如 Proxy / dns_direct / America / HongKong\n\n【场景A】只给 Chrome 走代理，其余默认规则不变（推荐）：\n  将 Chrome 进程指向 Proxy，其他流量仍按 domain/geo 规则分流。\n\n【场景B】只给 Chrome 走代理，其余全部直连：\n  1. 在 config/base-template.json 中将 route.final 改为 dns_direct\n  2. 将 Chrome 进程指向 Proxy\n  这样域名规则失效，除 Chrome 以外一律直连。",
+  "rules": [
+    {
+      "_comment": "macOS Chrome 全进程组（取消注释以启用）",
+      "process_name": [
+        "Google Chrome",
+        "Google Chrome Helper",
+        "Google Chrome Helper (Renderer)",
+        "Google Chrome Helper (GPU)",
+        "Google Chrome Helper (Plugin)"
+      ],
+      "outbound": "Proxy"
+    },
+    {
+      "_comment": "示例：终端命令行工具走直连（取消注释以启用）",
+      "process_name": ["curl", "wget", "rsync", "scp", "sftp"],
+      "outbound": "dns_direct"
+    }
+  ]
+}
