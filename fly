@@ -18,6 +18,8 @@ GROUP_STRATEGY_FILE_DEFAULT="${CONFIG_DIR}/group-strategy.json"
 GROUP_STRATEGY_EXAMPLE_FILE="${TEMPLATE_DIR}/group-strategy.example.json"
 ROUTE_RULES_FILE_DEFAULT="${CONFIG_DIR}/route-rules.json"
 ROUTE_RULES_EXAMPLE_FILE="${TEMPLATE_DIR}/route-rules.example.json"
+PROCESS_RULES_EXAMPLE_FILE="${TEMPLATE_DIR}/process-rules.example.json"
+PROCESS_RULES_FILE_DEFAULT="${CONFIG_DIR}/process-rules.json"
 
 MACOS_DNS_GUARD_STATE_FILE="${STATE_DIR}/macos-dns-guard.json"
 MACOS_DNS_GUARD_STATE_TXT_FILE="${STATE_DIR}/macos-dns-guard.state"
@@ -182,6 +184,7 @@ load_env() {
   : "${GROUP_STRATEGY_FILE:=./config/group-strategy.json}"
   : "${NODES_FILE:=./build/nodes.json}"
   : "${ROUTE_RULES_FILE:=./config/route-rules.json}"
+  : "${PROCESS_RULES_FILE:=./config/process-rules.json}"
   : "${ROUTE_RULES_FILE_ONLINE:=}"
   : "${ROUTE_RULES_FILE_RULESET:=${ROUTE_RULES_FILE_ONLINE:-./config/route-rules.ruleset.json}}"
   : "${BASE_TEMPLATE_FILE:=./config/base-template.json}"
@@ -225,6 +228,7 @@ load_env() {
   GROUP_STRATEGY_FILE="$(abs_path "${GROUP_STRATEGY_FILE}")"
   NODES_FILE="$(abs_path "${NODES_FILE}")"
   ROUTE_RULES_FILE="$(abs_path "${ROUTE_RULES_FILE}")"
+  PROCESS_RULES_FILE="$(abs_path "${PROCESS_RULES_FILE}")"
   ROUTE_RULES_FILE_RULESET="$(abs_path "${ROUTE_RULES_FILE_RULESET}")"
   BASE_TEMPLATE_FILE="$(abs_path "${BASE_TEMPLATE_FILE}")"
   BASE_TEMPLATE_FILE_IOS="$(abs_path "${BASE_TEMPLATE_FILE_IOS}")"
@@ -1288,6 +1292,18 @@ init_files() {
     log "generated ${ROUTE_RULES_FILE_DEFAULT}"
   else
     log "exists ${ROUTE_RULES_FILE_DEFAULT}, skip"
+  fi
+
+  if [[ -f "${PROCESS_RULES_EXAMPLE_FILE}" ]]; then
+    if [[ ! -f "${PROCESS_RULES_FILE_DEFAULT}" ]] || is_true "${force}"; then
+      if [[ -f "${PROCESS_RULES_FILE_DEFAULT}" ]]; then
+        backup_existing_file "${PROCESS_RULES_FILE_DEFAULT}"
+      fi
+      cp "${PROCESS_RULES_EXAMPLE_FILE}" "${PROCESS_RULES_FILE_DEFAULT}"
+      log "generated ${PROCESS_RULES_FILE_DEFAULT}"
+    else
+      log "exists ${PROCESS_RULES_FILE_DEFAULT}, skip"
+    fi
   fi
 
   log "init complete"
