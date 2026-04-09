@@ -1755,6 +1755,14 @@ cmd_build_config() {
     --urltest-interval "${urltest_interval}"
     --urltest-tolerance "${urltest_tolerance}"
   )
+  # Pass process rules file if it exists (optional feature)
+  if [[ -f "${PROCESS_RULES_FILE}" ]]; then
+    cmd+=(--process-rules-file "${PROCESS_RULES_FILE}")
+  fi
+  # Enable V2Ray API stats for desktop/terminal builds
+  if [[ "${target}" != "ios" ]]; then
+    cmd+=(--enable-v2ray-api)
+  fi
   if is_true "${compact}"; then
     cmd+=(--compact)
   fi
