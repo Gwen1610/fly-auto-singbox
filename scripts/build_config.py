@@ -477,10 +477,15 @@ def validate_process_rules(process_rules, outbound_tags):
     for i, rule in enumerate(process_rules):
         rule = deepcopy(rule)
         outbound = rule.get("outbound")
-        if outbound:
+        if outbound is not None:
             mapped = normalize_outbound(outbound)
             if mapped == "direct":
-                mapped = VT_DNS_DIRECT_TAG if VT_DNS_DIRECT_TAG in outbound_tags else "direct"
+                if VT_DNS_DIRECT_TAG in outbound_tags:
+                    mapped = VT_DNS_DIRECT_TAG
+                else:
+                    raise RuntimeError(
+                        f"process-rules.rules[{i}].outbound 'direct' requires dns_direct outbound to be present"
+                    )
             if mapped == "block":
                 rule.pop("outbound", None)
                 rule.setdefault("action", "reject")
