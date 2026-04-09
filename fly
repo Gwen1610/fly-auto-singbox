@@ -2564,6 +2564,50 @@ except Exception:
     printf '  流量  ↑ %-14s  ↓ %s\n' "${up_str}" "${down_str}"
   fi
 
+  # Connections panel (Clash API /connections)
+  local conn_count=0
+  local conn_lines=""
+  if command -v curl >/dev/null 2>&1; then
+    local conn_json
+    conn_json="$(curl -s --connect-timeout 1 --max-time 2 \
+      ${API_SECRET:+-H "Authorization: Bearer ${API_SECRET}"} \
+      "http://${API_HOST}/connections" 2>/dev/null)" || conn_json=""
+    if [[ -n "${conn_json}" ]]; then
+      local _conn_out
+      _conn_out="$(printf '%s' "${conn_json}" | "${PYTHON_BIN}" -c "
+import json, sys, collections
+try:
+    d = json.loads(sys.stdin.read())
+    conns = d.get('connections', [])
+    count = len(conns)
+    groups = collections.Counter()
+    for c in conns:
+        chains = c.get('chains', [])
+        if chains:
+            groups[chains[0]] += 1
+    top = ' | '.join(f'{g}:{n}' for g, n in groups.most_common(4))
+    print(count)
+    print(top)
+except Exception:
+    print(0)
+    print('')
+" 2>/dev/null)" || _conn_out="0
+"
+      conn_count="$(printf '%s' "${_conn_out}" | sed -n '1p')"
+      conn_lines="$(printf '%s' "${_conn_out}" | sed -n '2p')"
+    fi
+  fi
+
+  if [[ "${COLOR_STDOUT_ENABLED}" == "1" ]]; then
+    printf '  \033[36m连接\033[0m  %s 条活跃' "${conn_count}"
+    [[ -n "${conn_lines}" ]] && printf '  \033[33m%s\033[0m' "${conn_lines}"
+    printf '\n'
+  else
+    printf '  连接  %s 条活跃' "${conn_count}"
+    [[ -n "${conn_lines}" ]] && printf '  %s' "${conn_lines}"
+    printf '\n'
+  fi
+
   # Selector groups
   printf '\n'
   if [[ "${COLOR_STDOUT_ENABLED}" == "1" ]]; then
@@ -2597,9 +2641,9 @@ for name, info in proxies.items():
   # Footer
   printf '\n'
   if [[ "${COLOR_STDOUT_ENABLED}" == "1" ]]; then
-    printf '  \033[7m  \033[36m[s]\033[0m\033[7m 切换节点   \033[36m[d]\033[0m\033[7m 测延迟   \033[36m[q]\033[0m\033[7m 退出   (3 秒自动刷新)  \033[0m\n'
+    printf '  \033[7m  \033[36m[s]\033[0m\033[7m 切换节点   \033[36m[d]\033[0m\033[7m 测延迟   \033[36m[c]\033[0m\033[7m 关闭连接   \033[36m[q]\033[0m\033[7m 退出   (3 秒自动刷新)  \033[0m\n'
   else
-    printf '  [s] 切换节点   [d] 测延迟   [q] 退出   (3 秒自动刷新)\n'
+    printf '  [s] 切换节点   [d] 测延迟   [c] 关闭连接   [q] 退出   (3 秒自动刷新)\n'
   fi
 }
 
@@ -2643,6 +2687,9 @@ cmd_monitor() {
           tput smcup 2>/dev/null || true
           printf '\033[2J'
           tput civis 2>/dev/null || true
+          ;;
+        c|C)
+          fly_api DELETE /connections
           ;;
       esac
     fi
