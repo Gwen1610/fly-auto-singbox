@@ -455,15 +455,18 @@ def load_process_rules(path: Path):
     for i, rule in enumerate(rules):
         if not isinstance(rule, dict):
             raise RuntimeError(f"process-rules.rules[{i}] must be object")
+        # Strip _-prefixed keys (e.g. _comment) first
+        cleaned = {k: v for k, v in rule.items() if not k.startswith("_")}
+        # Skip entries that were purely comment/annotation (no real fields)
+        if not cleaned:
+            continue
         has_matcher = any(
-            rule.get(k) for k in ("process_name", "process_path", "process_path_regex")
+            cleaned.get(k) for k in ("process_name", "process_path", "process_path_regex")
         )
         if not has_matcher:
             raise RuntimeError(
                 f"process-rules.rules[{i}] must have process_name, process_path, or process_path_regex"
             )
-        # Strip comment-only entries (pure _comment objects with no matcher)
-        cleaned = {k: v for k, v in rule.items() if not k.startswith("_")}
         validated.append(cleaned)
     return validated
 
@@ -1121,6 +1124,9 @@ def ensure_connectivity_route(config, user_rules, compat_profile="vt", connectiv
         if json.dumps(item, ensure_ascii=False, sort_keys=True) not in existing:
             combined.append(item)
     if process_rules:
+        # Process rules are inserted after base connectivity rules (including ip_is_private).
+        # This means LAN/private IP traffic hits ip_is_private -> dns_direct first, which is correct
+        # (private IP traffic should never be proxied regardless of process rule settings).
         combined.extend(process_rules)
     combined.extend(user_rules)
 
