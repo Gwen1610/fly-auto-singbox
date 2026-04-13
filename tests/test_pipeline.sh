@@ -292,6 +292,20 @@ if hijack_idx == -1:
 if process_idx <= hijack_idx:
     raise SystemExit(f"ASSERT FAIL: process rule (idx={process_idx}) should come after hijack-dns (idx={hijack_idx})")
 
+# Also verify process rule comes before the first user domain/geo rule
+first_user_idx = next(
+    (i for i, r in enumerate(rules)
+     if isinstance(r, dict)
+     and r.get("action") not in ("hijack-dns", "reject", "resolve")
+     and not r.get("ip_is_private")
+     and "process_name" not in r),
+    -1
+)
+if first_user_idx != -1 and process_idx >= first_user_idx:
+    raise SystemExit(
+        f"ASSERT FAIL: process rule (idx={process_idx}) should come before first user rule (idx={first_user_idx})"
+    )
+
 # v2ray_api assertions
 exp = cfg.get("experimental", {})
 v2ray = exp.get("v2ray_api", {})
@@ -301,6 +315,10 @@ if not v2ray.get("stats", {}).get("enabled"):
     raise SystemExit("ASSERT FAIL: v2ray_api.stats.enabled should be true")
 if "Proxy" not in v2ray.get("stats", {}).get("outbounds", []):
     raise SystemExit("ASSERT FAIL: v2ray_api.stats.outbounds should include 'Proxy'")
+if v2ray.get("listen") != "127.0.0.1:8081":
+    raise SystemExit(
+        f"ASSERT FAIL: v2ray_api.listen should be '127.0.0.1:8081', got {v2ray.get('listen')!r}"
+    )
 PY
 
 ./fly build-config --connectivity-mode stable
